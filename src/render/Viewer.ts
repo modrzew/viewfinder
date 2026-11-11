@@ -73,6 +73,9 @@ export class Viewer {
   private presentedMix = -1;
   private presentedCount = -1;
   private opticalKey: unknown[] = [];
+  private exposureKey: unknown[] = [];
+  /** What's on screen, so an exposure-only change can re-run LensPass on it. */
+  private shown: { preview: Texture; refined: Texture | null; mix: number } | null = null;
   private poseKey: number[] = [];
   private rect: Rect = { x: 0, y: 0, width: 0, height: 0 };
   private settings: Settings | null = null;
@@ -202,9 +205,14 @@ export class Viewer {
       this.sceneRT.width, this.sceneRT.height, passes.gather, passes.refine, passes.residual];
     const changed = !sameKey(key, this.opticalKey);
     this.opticalKey = key;
+    const exposureKey = [optics.exposureFactor, optics.vignetteEv, passes.vignette, this.setup.baseExposure];
+    const exposureChanged = !sameKey(exposureKey, this.exposureKey);
+    this.exposureKey = exposureKey;
 
     if (view === 'eye') this.renderEye(changed);
     else this.renderCamera(changed, now, optics, passes.refine);
+    // Exposure-only change (§10.1): re-run LensPass on what's shown; the accumulation is kept.
+    if (exposureChanged && !changed && this.shown) this.present(this.shown.preview, this.shown.refined, this.shown.mix);
 
     this.updateRangefinder(now);
     if (state.debug.mode !== this.mode || state.debug.samplesPerFrame !== this.samplesPerFrame) {
@@ -368,8 +376,15 @@ export class Viewer {
   }
 
   private present(preview: Texture, refined: Texture | null, mix: number): void {
-    this.lensPass.render(this.renderer, preview, refined, { mix });
+    const o = this.optics!;
+    const vignette = this.settings!.view === 'camera' && useStore.getState().debug.passes.vignette;
+    this.lensPass.render(this.renderer, preview, refined, {
+      mix,
+      exposure: this.setup!.baseExposure * o.exposureFactor,
+      vignetteEv: vignette ? o.vignetteEv : 0,
+    });
     this.output.render(this.renderer, null as never, this.lensPass.target, 0, false);
+    this.shown = { preview, refined, mix };
   }
 
   private publishSamples(samples: number): void {
