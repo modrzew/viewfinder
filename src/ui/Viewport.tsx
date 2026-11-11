@@ -1,44 +1,16 @@
 import { useEffect, useRef } from 'react';
-import { formatDistanceM } from '../optics/focusScale';
-import { formatFNumber, shutterLabel } from '../optics/stops';
 import { frameRect } from '../render/layout';
 import { Viewer, type ViewerOptions } from '../render/Viewer';
 import { useOptics, useStore } from '../state/store';
-import { DebugOverlay, FpsCounter } from './DebugOverlay';
 import { FrameLines } from './FrameLines';
+import { Hud } from './Hud';
 import { LoadingScreen } from './LoadingScreen';
-import { avOutOfRange, centreText } from './format';
 
-function InfoBar() {
-  const o = useOptics();
-  const centre = useStore((s) => s.runtime.centreDistanceM);
-  const dof = Number.isFinite(o.dofFarM)
-    ? `${formatDistanceM(o.dofNearM, false)}–${formatDistanceM(o.dofFarM)}`
-    : `${formatDistanceM(o.dofNearM)}–∞`;
-  return (
-    <div className="infobar">
-      <span>{Math.round(o.focalMm)}<small>mm</small></span>
-      <span>{formatFNumber(o.fNumber)}</span>
-      {/* Blinks like the camera's display when Av runs out of shutter speeds. */}
-      <span className={avOutOfRange(o) ? 'blink' : undefined}>
-        {shutterLabel(o.shutterS)}{o.exposureMode === 'M' && <small> M</small>}
-      </span>
-      <span><small>FOCUS </small>{formatDistanceM(o.focusM)}</span>
-      <span><small>DOF </small>{dof}</span>
-      <span><small>⌖ </small>{centreText(centre)}</span>
-    </div>
-  );
-}
-
-function RefineIndicator() {
-  const refine = useStore((s) => s.runtime.refine);
-  if (refine.samples <= 0 || refine.samples >= refine.target) return null;
-  return <div className="refine">Refining {refine.samples}/{refine.target}</div>;
-}
-
-export function Viewport({ loadScene, debug }: {
+export function Viewport({ loadScene, debug, timeOfDay }: {
   loadScene: ViewerOptions['loadScene'];
   debug: boolean;
+  /** Whether the scene has times of day. */
+  timeOfDay: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const viewport = useStore((s) => s.runtime.viewport);
@@ -69,19 +41,11 @@ export function Viewport({ loadScene, debug }: {
   return (
     <main className="viewport" ref={ref}>
       <div className="frame-overlay" style={frameStyle}>
-        {view === 'camera' ? (
-          <>
-            <div className="af-point" />
-            <RefineIndicator />
-            <InfoBar />
-          </>
-        ) : (
-          <FrameLines width={r.width} height={r.height} />
-        )}
-        {debug ? <DebugOverlay frameWidth={r.width} /> : <FpsCounter />}
+        {view === 'camera' ? <div className="af-point" /> : <FrameLines width={r.width} height={r.height} />}
       </div>
+      <Hud debug={debug} timeOfDay={timeOfDay} frameWidth={r.width} />
       <LoadingScreen />
-      {!locked && !helpOpen && <div className="lock-hint">Click to look around · <kbd>H</kbd> help</div>}
+      {!locked && !helpOpen && <div className="lock-hint">Click to look around</div>}
     </main>
   );
 }

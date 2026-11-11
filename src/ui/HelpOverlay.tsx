@@ -1,19 +1,22 @@
 import { useStore } from '../state/store';
 
-const CONTROLS: [string, string][] = [
-  ['Click viewport', 'Capture the mouse · Esc releases it'],
+/** Keys are drawn as key caps; mouse input is named. Grouped as on the HUD. */
+const CONTROLS: [string | string[], string][] = [
+  ['Click the view', 'Capture the mouse · Esc releases it'],
   ['Mouse', 'Look around'],
-  ['W A S D', 'Walk (hold Shift to hurry)'],
-  ['Q / E', 'Lower / raise eye height'],
+  [['W', 'A', 'S', 'D'], 'Walk (hold Shift to hurry)'],
+  [['Q', 'E'], 'Lower / raise eye height'],
+  [['R'], 'Back to spawn'],
+  [['L'], 'Next lens'],
   ['Wheel', 'Zoom (zoom lenses; Shift ×5)'],
-  ['[ / ]', 'Aperture wider / narrower by ⅓ stop'],
-  ['− / =', 'Focus nearer / farther (Shift ×10)'],
-  ['V', 'Camera / Eye view'],
-  ['X', 'Exposure mode Av / M'],
-  ['L', 'Next lens'],
-  ['T', 'Time of day: noon, golden hour, evening, night'],
-  ['R', 'Back to spawn'],
-  ['H', 'This help'],
+  [['[', ']'], 'Aperture wider / narrower by ⅓ stop'],
+  [['−', '='], 'Focus nearer / farther (Shift ×10)'],
+  [['X'], 'Exposure mode Av / M'],
+  [['V'], 'Camera / Eye view'],
+  [['T'], 'Time of day: noon, golden hour, evening, night'],
+  [['Tab'], 'Hold for details: field of view, hyperfocal distance and more'],
+  [['U'], 'Hide / show the HUD'],
+  [['H'], 'This help'],
 ];
 
 export function HelpOverlay() {
@@ -27,11 +30,12 @@ export function HelpOverlay() {
         <p>
           Walk through the scene and see it the way a Canon EOS 90D would: the lens sets the framing, and the
           aperture and focus set the depth of field. Hold still and the image refines to physically correct blur.
+          Every setting is on the HUD next to the key that changes it.
         </p>
         <dl>
           {CONTROLS.map(([k, v]) => (
-            <div key={k}>
-              <dt>{k}</dt>
+            <div key={v}>
+              <dt>{typeof k === 'string' ? k : k.map((key) => <kbd key={key}>{key}</kbd>)}</dt>
               <dd>{v}</dd>
             </div>
           ))}

@@ -45,7 +45,4 @@ export const CONFIG = {
   lookRadPerPx: 0.0022,
   lookReferenceVfovDeg: 45,
   playerRadiusM: 0.15,
-
-  /** Panel width in CSS px (§9.1). */
-  panelWidthPx: 320,
 } as const;

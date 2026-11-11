@@ -75,7 +75,7 @@ Rules:
 
 ```
           ┌──────────────── React UI ────────────────┐
-          │ ControlPanel   Readout   FrameLines  ... │
+          │ Hud   HelpOverlay   FrameLines   ...     │
           └───────┬──────────────────────▲───────────┘
           setters │                      │ subscribe
                   ▼                      │
@@ -121,7 +121,7 @@ src/
   scene/
     courtyard.ts  layout.ts  stringLights.ts  testScene.ts  loadAssets.ts
   ui/
-    Viewport.tsx  ControlPanel.tsx  Readout.tsx  FrameLines.tsx
+    Viewport.tsx  Hud.tsx  FrameLines.tsx
     LoadingScreen.tsx  HelpOverlay.tsx  DebugOverlay.tsx  styles.css
 ```
 
@@ -300,12 +300,11 @@ Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the
 
 ### 9.1 Layout
 
-- **Panel and viewport.** A 320 px control panel sits on the right; the viewport fills the rest of the window.
+- **Viewport and HUD.** The viewport fills the window. All UI is a game-style HUD drawn over it (§9.2). Every setting is shown next to the key that changes it, so nothing needs the mouse. The HUD ignores the mouse: clicking anywhere captures it. U hides the HUD.
 - **Camera view:**
   - The frame is the largest 3:2 rectangle that fits the viewport, centred, with black around it.
-  - An info bar runs along the bottom inside the frame, like the 90D's viewfinder status line.
-  - A small centre AF-point square marks what the centre-distance readout measures.
-  - A refine indicator shows progress (`Refining 96/256`, then nothing once done).
+  - A small centre AF-point square marks what the centre-distance readout measures; the distance is shown under it.
+  - A refine indicator at the top centre shows progress (`Refining 96/256` with a bar, then nothing once done).
 - **Eye view:**
   - Covers the full viewport, horizontal FOV 90°, aspect taken from the window.
   - Draws a frame-lines rectangle for the current lens, labelled (e.g. `50 mm`). Its half-width fraction is `tan(hfov_lens/2) / tan(hfov_eye/2)`; the half-height fraction is the same with vfov.
@@ -314,31 +313,35 @@ Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the
   - Loading screen showing MB loaded / total.
   - Help overlay (H) listing the controls, shown automatically on first load.
 
-### 9.2 Control panel (top to bottom)
+### 9.2 HUD
 
-| Control | Behaviour |
-|---|---|
-| Camera | Select. Only the EOS 90D; it's there to show the extension point. |
-| Lens | Select, listing lenses that mount. |
-| Zoom | Slider, zoom lenses only. 1 mm steps, ticks at 18/24/35/45/55. |
-| Aperture | Slider over the third-stops within the current limits. Label `f/x`. |
-| Focus | Slider (§8.6), labelled with the distance. |
-| Exposure | Segmented control: `Av` / `M`. |
-| View | Segmented control: `Camera` / `Eye`. |
-| Time of day | Segmented control: `Noon` / `Golden` / `Evening` / `Night` (§11.8). Courtyard only. Shows sky download progress. |
-| Readout | See below. |
+Small clusters in the corners, styled after shooter HUDs: no panels behind them, icons rather than labels, white condensed type (Barlow Condensed) with a dark halo, and segmented bars standing in for sliders. The side clusters tilt slightly toward the centre. Key prompts are outlined letters. Everything scales with the window height (1× at 900 px, clamped to 0.8–1.4×).
 
-Readout lines:
+**Bottom left: the body and its settings.** A heading with the body name, then one row per setting: an icon, its keys, the value, a note, and a bar.
+
+| Row | Keys | Value and note | Bar |
+|---|---|---|---|
+| Aperture | `[` `]` | `f/5.6`. When clamped, a red tag such as `widest at 55 mm`. | One segment per third-stop within the current limits, lit up to the current one. |
+| Focus | `−` `=` | The distance; the depth of field (`1.95 – 2.05 m`). | The focus scale (§8.6): the depth of field lit, the focus distance marked, and a tick under what's at the AF point. |
+| Exposure | X | `Av` or `M`, the shutter speed, and `ISO 100`. In M, or in Av at a shutter limit, the EV offset too (`ISO 100 · −1⅓ EV`). In Av at a limit the shutter speed blinks and the note turns into a red tag. | Exposure level, ±3 EV in thirds, lit from the middle out to the offset. |
+
+**Bottom right: the lens, like a weapon loadout.** The lens name, the focal length in large type with `56 mm equiv. · 35.3° × 24.0°` under it, a zoom bar and the wheel prompt (zoom lenses only), and a slot per lens that mounts, the current one filled, after the L prompt.
+
+**Top left:** chips for View (V: camera or eye) and Time of day (T, courtyard only, with sky download progress), each a key, an icon badge and the current value.
+
+**Top right:** prompts for Tab (details), U (hide HUD) and H (help), with the fps counter, or the debug overlay with `?debug=1` (§10.8), under them.
+
+**Hold Tab** for the full readout in a card:
 - Focal length with equivalent: `35 mm (56 mm equiv.)`.
 - FOV: `H 35.3° · V 24.0° · D 41.9°`.
-- f-number. When clamped, add a hint such as `(widest at 55 mm: f/5.6)`.
-- Shutter: `1/500 · ISO 100` in Av (`1/8000 · ISO 100 · +⅓ EV` at a limit), or `1/500 · −1⅓ EV` in M.
+- f-number, with the clamp hint.
+- Shutter with ISO and EV offset.
 - Focus distance.
-- DoF: `1.95 – 2.05 m (11 cm)` or `2.13 m – ∞`.
+- DoF: `1.95 – 2.05 m (11 cm deep)` or `2.13 m – ∞ (to infinity)`.
 - Hyperfocal distance.
-- Centre distance.
+- Distance at the AF point.
 
-The viewfinder info bar shows a compact subset: focal length, f-number, shutter, focus, DoF, centre distance.
+A changed setting briefly turns amber, so a key press shows what it did.
 
 ### 9.3 Input
 
@@ -356,6 +359,8 @@ The viewfinder info bar shows a compact subset: focal length, f-number, shutter,
 | L | Next lens. |
 | T | Next time of day (courtyard only). |
 | R | Back to spawn. |
+| Tab (hold) | Details: the full readout. |
+| U | Hide / show the HUD. |
 | H | Help overlay. |
 
 Shortcuts work with or without pointer lock. Ignore them while a form control has focus.
@@ -616,7 +621,7 @@ Used to verify the optics. Built in code, with no downloads:
 - **Noon sun:** texels above a clamp are taken out of the HDRI before PMREM, and the irradiance removed becomes the `DirectionalLight` (colour and intensity). The sun then lights the scene once, with shadows. Its shadow camera is fitted to the courtyard.
 - **Lamps on:** festoons get 4 stand-in `PointLight`s per strand carrying the bulbs' luminous intensity (emissive × projected area); post lamps are `SpotLight`s with 1024² shadows; wall lanterns and candles are `PointLight`s without shadows. The dark interior behind the windows goes black, since point lights shine through walls.
 - **Lit windows:** a glow plane (curtain texture, per-window warm tint and dimming) behind each opening, picked by a fixed hash. The facade glass is opaque, so it turns 20% opaque while windows are lit.
-- **Switching:** only the initial sky loads with the scene; others download on first use, with progress in the panel. The Viewer relights the scene, compiles the new shaders with `compileAsync` while the old image stays up, re-renders the shadow maps and resets refinement. A newer choice supersedes one still loading.
+- **Switching:** only the initial sky loads with the scene; others download on first use, with progress on the HUD. The Viewer relights the scene, compiles the new shaders with `compileAsync` while the old image stays up, re-renders the shadow maps and resets refinement. A newer choice supersedes one still loading.
 - **Overflow guard:** the noon sun's glints can overflow the half-float scene target. The passes read scene colour through `sceneColor()`, which clamps to the largest finite half and drops NaN.
 
 ## 12. Asset pipeline and budget

@@ -1,19 +1,16 @@
 import { formatDistanceM } from '../optics/focusScale';
-import { formatEvThirds, formatFNumber, shutterLabel } from '../optics/stops';
+import { formatEvThirds } from '../optics/stops';
 import type { DerivedOptics } from '../optics/types';
 
-export function focalText(o: DerivedOptics): string {
-  return `${Math.round(o.focalMm)} mm (${Math.round(o.equivalentFocalMm)} mm equiv.)`;
-}
-
 export function fovText(o: DerivedOptics): string {
-  return `H ${o.hfovDeg.toFixed(1)}° · V ${o.vfovDeg.toFixed(1)}° · D ${o.dfovDeg.toFixed(1)}°`;
+  return `${o.hfovDeg.toFixed(1)}° × ${o.vfovDeg.toFixed(1)}°`;
 }
 
+/** Why the f-number isn't the requested one; the value next to it says what it is. */
 export function fNumberHint(o: DerivedOptics): string | null {
   const f = Math.round(o.focalMm);
-  if (o.clamped === 'widest') return `widest at ${f} mm: ${formatFNumber(o.widestFNumber)}`;
-  if (o.clamped === 'narrowest') return `narrowest at ${f} mm: ${formatFNumber(o.narrowestFNumber)}`;
+  if (o.clamped === 'widest') return `widest at ${f} mm`;
+  if (o.clamped === 'narrowest') return `narrowest at ${f} mm`;
   return null;
 }
 
@@ -22,10 +19,9 @@ export function avOutOfRange(o: DerivedOptics): boolean {
   return o.exposureMode === 'Av' && Math.round(o.evOffset * 3) !== 0;
 }
 
-export function shutterText(o: DerivedOptics): string {
-  const t = shutterLabel(o.shutterS);
-  if (o.exposureMode === 'M') return `${t} · ${formatEvThirds(o.evOffset)}`;
-  return avOutOfRange(o) ? `${t} · ISO 100 · ${formatEvThirds(o.evOffset)}` : `${t} · ISO 100`;
+/** ISO, plus the exposure error in M or at an Av shutter limit. */
+export function exposureNote(o: DerivedOptics): string {
+  return o.exposureMode === 'M' || avOutOfRange(o) ? `ISO 100 · ${formatEvThirds(o.evOffset)}` : 'ISO 100';
 }
 
 function lengthText(m: number): string {
@@ -36,7 +32,11 @@ function lengthText(m: number): string {
 
 export function dofText(o: DerivedOptics): string {
   if (!Number.isFinite(o.dofFarM)) return `${formatDistanceM(o.dofNearM)} – ∞`;
-  return `${formatDistanceM(o.dofNearM, false)} – ${formatDistanceM(o.dofFarM)} (${lengthText(o.dofFarM - o.dofNearM)})`;
+  return `${formatDistanceM(o.dofNearM, false)} – ${formatDistanceM(o.dofFarM)}`;
+}
+
+export function dofDepthText(o: DerivedOptics): string {
+  return Number.isFinite(o.dofFarM) ? `${lengthText(o.dofFarM - o.dofNearM)} deep` : 'to infinity';
 }
 
 export function centreText(d: number | null): string {

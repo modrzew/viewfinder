@@ -30,7 +30,7 @@ export interface Runtime {
   ev100: number;
   /** A time of day whose sky is still downloading. */
   timeOfDayLoading: { timeOfDay: TimeOfDay; loadedBytes: number; totalBytes: number } | null;
-  /** Size of the viewport area (everything left of the panel), CSS px. */
+  /** Size of the viewport (the whole window), CSS px. */
   viewport: { width: number; height: number };
   /** Size of the render buffer in device px. */
   renderPx: { width: number; height: number };
@@ -54,6 +54,9 @@ interface Store {
   runtime: Runtime;
   debug: DebugInfo;
   helpOpen: boolean;
+  hudVisible: boolean;
+  /** The full readout, shown while Tab is held. */
+  detailsOpen: boolean;
 
   setBody(id: string): void;
   setLens(id: string): void;
@@ -71,6 +74,8 @@ interface Store {
   setTimeOfDay(t: TimeOfDay): void;
   nextTimeOfDay(): void;
   setHelpOpen(open: boolean): void;
+  setHudVisible(visible: boolean): void;
+  setDetailsOpen(open: boolean): void;
   setRuntime(patch: Partial<Runtime>): void;
   setDebug(patch: Partial<DebugInfo>): void;
   togglePass(pass: keyof DebugInfo['passes']): void;
@@ -130,6 +135,8 @@ export const useStore = create<Store>()((set, get) => {
       passes: { gather: true, refine: true, vignette: true, residual: true },
     },
     helpOpen: true,
+    hudVisible: true,
+    detailsOpen: false,
 
     setBody: (id) =>
       update((s) => {
@@ -181,6 +188,8 @@ export const useStore = create<Store>()((set, get) => {
       get().setTimeOfDay(TIMES_OF_DAY[(i + 1) % TIMES_OF_DAY.length].id);
     },
     setHelpOpen: (helpOpen) => set({ helpOpen }),
+    setHudVisible: (hudVisible) => set({ hudVisible }),
+    setDetailsOpen: (detailsOpen) => set({ detailsOpen }),
     setRuntime: (patch) => set((st) => ({ runtime: { ...st.runtime, ...patch } })),
     setDebug: (patch) => set((st) => ({ debug: { ...st.debug, ...patch } })),
     togglePass: (pass) =>

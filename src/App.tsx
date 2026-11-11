@@ -3,7 +3,6 @@ import { buildCourtyard } from './scene/courtyard';
 import { buildTestScene } from './scene/testScene';
 import type { TimeOfDay } from './scene/timeOfDay';
 import type { SceneSetup } from './scene/types';
-import { ControlPanel } from './ui/ControlPanel';
 import { HelpOverlay } from './ui/HelpOverlay';
 import { useShortcuts } from './ui/shortcuts';
 import { Viewport } from './ui/Viewport';
@@ -52,8 +51,7 @@ export default function App() {
   if (error) return <ErrorScreen message={error} />;
   return (
     <div className="app">
-      <Viewport loadScene={loadScene} debug={DEBUG} />
-      <ControlPanel timeOfDay={HAS_TIME_OF_DAY} />
+      <Viewport loadScene={loadScene} debug={DEBUG} timeOfDay={HAS_TIME_OF_DAY} />
       <HelpOverlay />
     </div>
   );
