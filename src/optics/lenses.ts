@@ -9,7 +9,7 @@ export const EF_50_18_STM: Lens = {
   minAperture: [{ fromFocalMm: 50, fNumber: 22 }],
   closestFocusM: 0.35,
   blades: 7,
-  roundness: { wideOpen: 1, stoppedDown: 0.35, stopsToStoppedDown: 2 },
+  roundness: { wideOpen: 1, stoppedDown: 0.1, stopsToStoppedDown: 2 },
   vignetteCornerEv: [{ focalMm: 50, ev: 0.8 }],
   info: { maxMagnification: '0.21×', construction: '6 elements / 5 groups', filterMm: 49, weightG: 160 },
   estimated: ['roundness', 'vignetteCornerEv'],
@@ -35,7 +35,7 @@ export const EF_S_18_55_STM: Lens = {
   ],
   closestFocusM: 0.25,
   blades: 7,
-  roundness: { wideOpen: 1, stoppedDown: 0.35, stopsToStoppedDown: 2 },
+  roundness: { wideOpen: 1, stoppedDown: 0.1, stopsToStoppedDown: 2 },
   vignetteCornerEv: [
     { focalMm: 18, ev: 1.0 },
     { focalMm: 55, ev: 0.6 },

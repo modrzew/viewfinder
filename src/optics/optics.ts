@@ -73,7 +73,8 @@ export function dofLimitsMm(f: number, n: number, c: number, s: number) {
  */
 export function blurDiscMm(f: number, n: number, s: number, d: number): number {
   const a = f / n;
-  if (!Number.isFinite(s)) return Number.isFinite(d) ? (a * f) / d : 0;
+  // Focused at ∞, everything finite is in the near field.
+  if (!Number.isFinite(s)) return Number.isFinite(d) ? -(a * f) / d : 0;
   const k = (a * f) / (s - f);
   if (!Number.isFinite(d)) return k;
   return (k * (d - s)) / d;

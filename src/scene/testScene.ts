@@ -10,7 +10,7 @@ import type { SceneSetup } from './types';
 export const TEST_TARGET_DISTANCES_M = [0.5, 1, 2, 4, 8, 16, 32];
 const EYE = 1.2;
 /** Point-source luminance (linear), bright enough to stay visible when spread into a large disc. */
-const POINT_SOURCE_INTENSITY = 200;
+const POINT_SOURCE_INTENSITY = 1000;
 
 function gradientSky(): DataTexture {
   const w = 8;
@@ -151,7 +151,7 @@ export function buildTestScene(): SceneSetup {
     post.position.set(0, (cy - h / 2) / 2, -postW);
     card.add(post);
 
-    const r = 0.0015 * d;
+    const r = 0.0007 * d;
     const src = new Mesh(sourceGeo, sourceMat);
     src.scale.setScalar(r);
     src.position.set(0, cy + h / 2 + r * 1.5, 0);
