@@ -1,3 +1,5 @@
+import type { WebGLRenderer } from 'three';
+import { buildCourtyard } from './scene/courtyard';
 import { buildTestScene } from './scene/testScene';
 import type { SceneSetup } from './scene/types';
 import { ControlPanel } from './ui/ControlPanel';
@@ -8,9 +10,10 @@ import { useStore } from './state/store';
 
 const params = new URLSearchParams(window.location.search);
 const DEBUG = params.get('debug') === '1';
+const SCENE = params.get('scene') === 'test' ? 'test' : 'courtyard';
 
-function loadScene(): Promise<SceneSetup> {
-  return Promise.resolve(buildTestScene());
+function loadScene(renderer: WebGLRenderer): Promise<SceneSetup> {
+  return SCENE === 'test' ? Promise.resolve(buildTestScene()) : buildCourtyard(renderer, DEBUG);
 }
 
 /** WebGL2 with float render targets is required (§4). */

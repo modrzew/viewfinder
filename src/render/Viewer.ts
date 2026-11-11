@@ -24,7 +24,7 @@ import { FULLSCREEN_VERT, type BlurParams } from './shaders/common';
 const RAD = Math.PI / 180;
 
 export interface ViewerOptions {
-  loadScene: () => Promise<SceneSetup>;
+  loadScene: (renderer: WebGLRenderer) => Promise<SceneSetup>;
 }
 
 /**
@@ -111,7 +111,7 @@ export class Viewer {
     container.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('pointerlockchange', this.onLockChange);
 
-    options.loadScene().then(
+    options.loadScene(this.renderer).then(
       (setup) => {
         if (this.disposed) return setup.dispose();
         this.setup = setup;
@@ -120,6 +120,7 @@ export class Viewer {
         this.renderer.shadowMap.needsUpdate = true;
         this.settings = null;
         this.invalidate();
+        useStore.getState().setRuntime({ loading: null });
       },
       (err: unknown) => useStore.getState().setRuntime({ error: String(err) }),
     );
@@ -344,7 +345,7 @@ export class Viewer {
     };
     const blur = this.blurParams(o);
     const passes = useStore.getState().debug.passes;
-    const residual = CONFIG.residualBlur && passes.residual ? 0.45 / Math.sqrt(this.refineTarget) : 0;
+    const residual = CONFIG.residualBlur && passes.residual ? CONFIG.residualBlurK / Math.sqrt(this.refineTarget) : 0;
     const { scene } = this.setup!;
     this.basePosition.copy(this.camera.position);
 

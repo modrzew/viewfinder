@@ -11,7 +11,7 @@ uniform sampler2D tSample;
 uniform sampler2D tDepth;
 uniform sampler2D tPrev;
 uniform float uWeight;          // 1 / n
-uniform float uResidualScale;   // 0.45 / sqrt(target), or 0 when disabled
+uniform float uResidualScale;   // k / sqrt(target), or 0 when disabled
 uniform float uResidualMax;     // px
 uniform float uRotation;        // per-sample kernel rotation, so tap patterns average out
 uniform vec2 uTexel;
@@ -99,7 +99,7 @@ export class Accumulator {
     this.count = 0;
   }
 
-  /** Adds one sample. `residualScale` = 0.45/√target (0 disables the residual blur). */
+  /** Adds one sample. `residualScale` = k/√target (0 disables the residual blur). */
   add(renderer: WebGLRenderer, sample: Texture, depth: Texture, blur: BlurParams, residualScale: number, residualMax: number): void {
     this.count++;
     const u = this.material.uniforms;

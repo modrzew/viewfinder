@@ -1,0 +1,31 @@
+{
+  "files": {
+    "hdri/venice_sunset_4k.hdr": 22841596,
+    "models/flower_gazania.glb": 530376,
+    "models/potted_plant_04.glb": 1035276,
+    "models/Lantern_01.glb": 1366008,
+    "models/wine_barrel_01.glb": 349200,
+    "models/gallinera_chair.glb": 313108,
+    "models/tea_set_01.glb": 637288,
+    "models/painted_wooden_bench.glb": 258708,
+    "models/ceramic_vase_01.glb": 162328,
+    "models/potted_plant_02.glb": 888380,
+    "models/outdoor_table_chair_set_01.glb": 1060768,
+    "models/gallinera_table.glb": 226144,
+    "models/croissant.glb": 988436,
+    "models/potted_plant_01.glb": 1626900,
+    "models/modular_urban_apartments_facade.glb": 2208268,
+    "models/large_iron_gate.glb": 505996,
+    "models/planter_box_01.glb": 349824,
+    "models/shrub_03.glb": 260296,
+    "models/street_lamp_01.glb": 282600,
+    "models/CoffeeCart_01.glb": 627104,
+    "models/wine_bottles_01.glb": 711288,
+    "textures/cobblestone_floor_06/arm.jpg": 2064324,
+    "textures/cobblestone_floor_06/diff.jpg": 3690206,
+    "textures/cobblestone_floor_06/nor_gl.jpg": 3866716,
+    "textures/clay_plaster/diff.jpg": 354209,
+    "textures/clay_plaster/arm.jpg": 385592,
+    "textures/clay_plaster/nor_gl.jpg": 784921
+  }
+}

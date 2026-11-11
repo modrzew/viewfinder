@@ -3,10 +3,12 @@ import { formatDistanceM } from '../optics/focusScale';
 import { formatFNumber, shutterLabel } from '../optics/stops';
 import { frameRect } from '../render/layout';
 import { Viewer } from '../render/Viewer';
+import type { WebGLRenderer } from 'three';
 import type { SceneSetup } from '../scene/types';
 import { useOptics, useStore } from '../state/store';
 import { DebugOverlay } from './DebugOverlay';
 import { FrameLines } from './FrameLines';
+import { LoadingScreen } from './LoadingScreen';
 import { centreText } from './format';
 
 function InfoBar() {
@@ -33,7 +35,10 @@ function RefineIndicator() {
   return <div className="refine">Refining {refine.samples}/{refine.target}</div>;
 }
 
-export function Viewport({ loadScene, debug }: { loadScene: () => Promise<SceneSetup>; debug: boolean }) {
+export function Viewport({ loadScene, debug }: {
+  loadScene: (renderer: WebGLRenderer) => Promise<SceneSetup>;
+  debug: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const viewport = useStore((s) => s.runtime.viewport);
   const view = useStore((s) => s.settings.view);
@@ -74,6 +79,7 @@ export function Viewport({ loadScene, debug }: { loadScene: () => Promise<SceneS
         )}
         {debug && <DebugOverlay frameWidth={r.width} />}
       </div>
+      <LoadingScreen />
       {!locked && !helpOpen && <div className="lock-hint">Click to look around · <kbd>H</kbd> help</div>}
     </main>
   );

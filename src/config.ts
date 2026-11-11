@@ -20,6 +20,8 @@ export const CONFIG = {
   stillFrames: 2,
   /** Per-sample residual blur against dotted bokeh (§10.3). */
   residualBlur: true,
+  /** Radius = k·|b_px|/√target. Larger k smooths bokeh texture but makes discs lumpy. */
+  residualBlurK: 0.45,
   residualBlurMaxPx: 8,
 
   /** Interactive DoF (§10.4): blur radius clamp in full-res px. */
