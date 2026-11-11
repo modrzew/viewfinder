@@ -5,7 +5,7 @@ import {
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { CONFIG } from '../config';
-import { apertureSamples, makeApertureShape, pixelJitter } from '../optics/aperture';
+import { apertureSamples, gatherKernel, makeApertureShape, pixelJitter } from '../optics/aperture';
 import { getBody } from '../optics/bodies';
 import { getLens } from '../optics/lenses';
 import { deriveOptics } from '../optics/optics';
@@ -16,6 +16,7 @@ import { FpsController } from './FpsController';
 import { applyThinLensSample, type ThinLens } from './jitteredProjection';
 import { eyeVfovDeg, frameRect, renderSize, type Rect } from './layout';
 import { Accumulator } from './passes/Accumulator';
+import { GatherDofPass } from './passes/GatherDofPass';
 import { LensPass } from './passes/LensPass';
 import { Rangefinder } from './Rangefinder';
 import { FULLSCREEN_VERT, type BlurParams } from './shaders/common';
@@ -42,6 +43,7 @@ export class Viewer {
   private sceneRT: WebGLRenderTarget;
   private readonly previewRT = new WebGLRenderTarget(1, 1, { type: HalfFloatType, format: RGBAFormat, depthBuffer: false });
   private readonly accumulator: Accumulator;
+  private readonly gather = new GatherDofPass();
   private readonly lensPass = new LensPass();
   private readonly output = new OutputPass();
   private readonly copyMaterial = new ShaderMaterial({
@@ -134,6 +136,7 @@ export class Viewer {
     this.sceneRT.dispose();
     this.previewRT.dispose();
     this.accumulator.dispose();
+    this.gather.dispose();
     this.lensPass.dispose();
     this.output.dispose();
     this.copyMaterial.dispose();
@@ -228,7 +231,7 @@ export class Viewer {
       this.dropFence();
       this.accumulator.reset();
       this.publishSamples(0);
-      this.renderPreview();
+      this.renderPreview(optics);
       this.present(this.previewRT.texture, null, 0);
       return;
     }
@@ -262,13 +265,29 @@ export class Viewer {
     }
   }
 
-  /** Centred pinhole render → preview buffer. */
-  private renderPreview(): void {
+  /** Centred render → gather DoF (or a plain copy when disabled) → preview buffer. */
+  private renderPreview(o: DerivedOptics): void {
     this.renderer.setRenderTarget(this.sceneRT);
     this.renderer.render(this.setup!.scene, this.camera);
-    this.copyMaterial.uniforms.tSrc.value = this.sceneRT.texture;
-    this.renderer.setRenderTarget(this.previewRT);
-    this.copyQuad.render(this.renderer);
+    if (useStore.getState().debug.passes.gather) {
+      this.updateApertureShape(o);
+      this.gather.render(this.renderer, this.sceneRT.texture, this.sceneRT.depthTexture!, this.previewRT,
+        this.blurParams(o), CONFIG.gatherMaxRadiusPx);
+    } else {
+      this.copyMaterial.uniforms.tSrc.value = this.sceneRT.texture;
+      this.renderer.setRenderTarget(this.previewRT);
+      this.copyQuad.render(this.renderer);
+    }
+  }
+
+  /** Regenerates aperture samples and the gather kernel when the blade shape changes (§10.5). */
+  private updateApertureShape(o: DerivedOptics): void {
+    const key = `${o.blades}:${o.roundness}`;
+    if (key === this.apertureKey) return;
+    this.apertureKey = key;
+    const shape = makeApertureShape(o.blades, o.roundness);
+    this.aperture = apertureSamples(shape, CONFIG.apertureSampleCount);
+    this.gather.setKernel(gatherKernel(shape, CONFIG.gatherKernelSize), shape.areaScale);
   }
 
   /**
@@ -301,11 +320,7 @@ export class Viewer {
   }
 
   private renderSamples(o: DerivedOptics, count: number): void {
-    const shapeKey = `${o.blades}:${o.roundness}`;
-    if (shapeKey !== this.apertureKey) {
-      this.apertureKey = shapeKey;
-      this.aperture = apertureSamples(makeApertureShape(o.blades, o.roundness), CONFIG.apertureSampleCount);
-    }
+    this.updateApertureShape(o);
     const w = this.sceneRT.width;
     const h = this.sceneRT.height;
     const lens: ThinLens = {
@@ -375,6 +390,7 @@ export class Viewer {
       this.sceneRT = this.makeSceneTarget(size.width, size.height);
       this.previewRT.setSize(size.width, size.height);
       this.accumulator.setSize(size.width, size.height);
+      this.gather.setSize(size.width, size.height);
       this.lensPass.setSize(size.width, size.height);
       useStore.getState().setRuntime({ renderPx: size });
     }
