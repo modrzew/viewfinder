@@ -1,11 +1,12 @@
 import { HalfFloatType, NoBlending, RGBAFormat, ShaderMaterial, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { FULLSCREEN_VERT } from '../shaders/common';
+import { FULLSCREEN_VERT, SCENE_COLOR_GLSL } from '../shaders/common';
 
 // Linear-light lens and exposure stage before OutputPass (§10.6): crossfades preview → refined,
 // then applies exposure × vignetting.
 
 const FRAG = /* glsl */ `
+${SCENE_COLOR_GLSL}
 uniform sampler2D tPreview;
 uniform sampler2D tRefined;
 uniform float uMix;
@@ -15,9 +16,10 @@ uniform float uAspect;
 varying vec2 vUv;
 
 void main() {
-  vec3 c = uMix <= 0.0 ? texture2D(tPreview, vUv).rgb
+  // The preview is the raw scene render in eye view, so it gets the same guard as the DoF passes.
+  vec3 c = uMix <= 0.0 ? sceneColor(tPreview, vUv)
     : uMix >= 1.0 ? texture2D(tRefined, vUv).rgb
-    : mix(texture2D(tPreview, vUv).rgb, texture2D(tRefined, vUv).rgb, uMix);
+    : mix(sceneColor(tPreview, vUv), texture2D(tRefined, vUv).rgb, uMix);
   // ρ: distance from the frame centre, 1 at the corners.
   vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
   float rho2 = dot(p, p) / (0.25 * (uAspect * uAspect + 1.0));

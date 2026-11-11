@@ -3,7 +3,7 @@ import { formControlFocused } from '../render/FpsController';
 import { useStore } from '../state/store';
 
 /** Settings shortcuts (§9.3). Movement keys live in FpsController. */
-export function useShortcuts(debug: boolean): void {
+export function useShortcuts(debug: boolean, timeOfDay: boolean): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || formControlFocused()) return;
@@ -18,6 +18,7 @@ export function useShortcuts(debug: boolean): void {
         case 'KeyV': if (!e.repeat) s.toggleView(); break;
         case 'KeyX': if (!e.repeat) s.toggleExposureMode(); break;
         case 'KeyL': if (!e.repeat) s.nextLens(); break;
+        case 'KeyT': if (timeOfDay && !e.repeat) s.nextTimeOfDay(); else handled = false; break;
         case 'KeyH': if (!e.repeat) s.setHelpOpen(!s.helpOpen); break;
         case 'Escape': s.setHelpOpen(false); handled = false; break;
         case 'Digit1': if (debug) s.togglePass('gather'); break;
@@ -30,5 +31,5 @@ export function useShortcuts(debug: boolean): void {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [debug]);
+  }, [debug, timeOfDay]);
 }

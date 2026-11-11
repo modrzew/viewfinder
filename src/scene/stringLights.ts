@@ -4,7 +4,8 @@ import {
 } from 'three';
 
 // Festoon lights (§11.5): a dark wire along a catenary with warm emissive bulbs hanging from it.
-// Bulbs are emissive only (no light per bulb); one draw call per material.
+// Bulbs are emissive only (no light per bulb); one draw call per material. When the bulbs should light the
+// courtyard, a few point lights per strand stand in for them (see `lightPositions`).
 
 export interface StrandSpec {
   z: number;
@@ -19,7 +20,20 @@ export interface StringLightOptions {
   bulbSpacingM: number;
   /** Linear emissive colour × intensity. */
   bulbEmissive: Color;
+  /** Stand-in point lights per strand, spread evenly along it. */
+  lightsPerStrand: number;
 }
+
+export interface StringLights {
+  group: Group;
+  bulbs: InstancedMesh;
+  /** Where the stand-in point lights go, at bulb height. */
+  lightPositions: Vector3[];
+  dispose(): void;
+}
+
+/** Side-on projected area of one bulb (radius 2 cm, 1.25 tall), m²: emissive × area ≈ its luminous intensity. */
+export const BULB_AREA_M2 = Math.PI * 0.02 * 0.025;
 
 /** Catenary parameter a with a·(cosh(L/2a) − 1) = sag. */
 function catenaryA(span: number, sag: number): number {
@@ -33,7 +47,7 @@ function catenaryA(span: number, sag: number): number {
   return (lo + hi) / 2;
 }
 
-export function buildStringLights(opts: StringLightOptions): { group: Group; dispose(): void } {
+export function buildStringLights(opts: StringLightOptions): StringLights {
   const group = new Group();
   group.name = 'stringLights';
   const disposables: (BufferGeometry | Material)[] = [];
@@ -51,6 +65,7 @@ export function buildStringLights(opts: StringLightOptions): { group: Group; dis
 
   const bulbs: Matrix4[] = [];
   const sockets: Matrix4[] = [];
+  const lightPositions: Vector3[] = [];
   const q = new Quaternion();
   const one = new Vector3(1, 1, 1);
 
@@ -79,6 +94,10 @@ export function buildStringLights(opts: StringLightOptions): { group: Group; dis
       sockets.push(new Matrix4().compose(new Vector3(x, y - 0.017, s.z), q, one));
       bulbs.push(new Matrix4().compose(new Vector3(x, y - 0.055, s.z), q, one));
     }
+    for (let i = 0; i < opts.lightsPerStrand; i++) {
+      const x = s.fromX + (span * (i + 0.5)) / opts.lightsPerStrand;
+      lightPositions.push(new Vector3(x, yAt(x) - 0.055, s.z));
+    }
   }
 
   const bulbMesh = new InstancedMesh(bulbGeo, bulbMat, bulbs.length);
@@ -90,6 +109,8 @@ export function buildStringLights(opts: StringLightOptions): { group: Group; dis
 
   return {
     group,
+    bulbs: bulbMesh,
+    lightPositions,
     dispose() {
       for (const d of disposables) d.dispose();
     },

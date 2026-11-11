@@ -9,6 +9,7 @@ export const EOS_90D: CameraBody = {
   imagePx: { width: 6960, height: 4640 },
   cocMm: 0.019,
   cropFactorNominal: 1.6,
+  shutterRangeS: { fastest: 2 ** -13, slowest: 2 ** 5 },   // 1/8000 to 30″
 };
 
 export const BODIES: CameraBody[] = [EOS_90D];

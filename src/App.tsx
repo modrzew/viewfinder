@@ -1,6 +1,7 @@
 import type { WebGLRenderer } from 'three';
 import { buildCourtyard } from './scene/courtyard';
 import { buildTestScene } from './scene/testScene';
+import type { TimeOfDay } from './scene/timeOfDay';
 import type { SceneSetup } from './scene/types';
 import { ControlPanel } from './ui/ControlPanel';
 import { HelpOverlay } from './ui/HelpOverlay';
@@ -12,9 +13,16 @@ const params = new URLSearchParams(window.location.search);
 const DEBUG = params.get('debug') === '1';
 const SCENE = params.get('scene') === 'test' ? 'test' : 'courtyard';
 
-function loadScene(renderer: WebGLRenderer): Promise<SceneSetup> {
-  return SCENE === 'test' ? Promise.resolve(buildTestScene()) : buildCourtyard(renderer, DEBUG);
+function loadScene(
+  renderer: WebGLRenderer,
+  timeOfDay: TimeOfDay,
+  onProgress: (loadedBytes: number, totalBytes: number) => void,
+): Promise<SceneSetup> {
+  return SCENE === 'test' ? Promise.resolve(buildTestScene()) : buildCourtyard(renderer, DEBUG, timeOfDay, onProgress);
 }
+
+/** Only the courtyard has times of day. */
+const HAS_TIME_OF_DAY = SCENE === 'courtyard';
 
 /** WebGL2 with float render targets is required (§4). */
 function unsupportedReason(): string | null {
@@ -38,14 +46,14 @@ function ErrorScreen({ message }: { message: string }) {
 }
 
 export default function App() {
-  useShortcuts(DEBUG);
+  useShortcuts(DEBUG, HAS_TIME_OF_DAY);
   const error = useStore((s) => s.runtime.error);
   if (UNSUPPORTED) return <ErrorScreen message={UNSUPPORTED} />;
   if (error) return <ErrorScreen message={error} />;
   return (
     <div className="app">
       <Viewport loadScene={loadScene} debug={DEBUG} />
-      <ControlPanel />
+      <ControlPanel timeOfDay={HAS_TIME_OF_DAY} />
       <HelpOverlay />
     </div>
   );

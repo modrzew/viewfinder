@@ -180,8 +180,7 @@ export function buildTestScene(): SceneSetup {
     spawn: { x: 0, z: 0, eyeHeightM: EYE, yawDeg: 0, pitchDeg: 0 },
     colliders: [],
     walkArea: { minX: -40, maxX: 40, minZ: -40, maxZ: 40 },
-    ev100: 12,
-    baseExposure: 1,
+    lighting: { ev100: 12, baseExposure: 1 },
     dispose() {
       for (const d of disposables) d.dispose();
     },

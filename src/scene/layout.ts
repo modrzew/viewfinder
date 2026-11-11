@@ -42,7 +42,36 @@ export const GALLINERA_CHAIRS: Placement[] = [
 export const COFFEE_CART: Placement = { x: 6.6, z: -3, rotYDeg: -90 };
 export const WINE_BARREL: Placement = { x: -5, z: -7, rotYDeg: 20 };
 export const BENCH: Placement = { x: 8.45, z: -9.5, rotYDeg: -90 };
-export const STREET_LAMP: Placement = { x: 5, z: -16, rotYDeg: 0 };
+/** Post lamps (street_lamp_01): the east one from the spec, and one between the gate and the planters. */
+export const STREET_LAMPS: Placement[] = [
+  { x: 5, z: -16, rotYDeg: 0 },
+  { x: -8.15, z: -16.15, rotYDeg: 90 },
+];
+
+/**
+ * Wall lanterns (street_lamp_02), on bay joints so they clear the doors and windows. Placement is the wall
+ * point; rotYDeg turns the lantern's +z (away from the wall) into the courtyard.
+ */
+export const WALL_LANTERNS: Placement[] = [
+  { x: -6, z: -26, rotYDeg: 0 },
+  { x: 0, z: -26, rotYDeg: 0 },
+  { x: 6, z: -26, rotYDeg: 0 },
+  { x: 9, z: -20, rotYDeg: -90 },
+  { x: 9, z: -11, rotYDeg: -90 },
+  { x: 9, z: -2, rotYDeg: -90 },
+  { x: -4.5, z: 4, rotYDeg: 180 },
+  { x: 4.5, z: 4, rotYDeg: 180 },
+];
+/** Height of the wall lanterns' mounting point; their glass is at about 2.6–3.2 m. */
+export const WALL_LANTERN_Y = 2.3;
+
+/** Candle lanterns on the other tables, as offsets from the table centre (the hero table has its own). */
+export const TABLE_LANTERNS: { table: 'set0' | 'set1' | 'set2' | 'gallinera'; dx: number; dz: number }[] = [
+  { table: 'set0', dx: -0.05, dz: 0.2 },
+  { table: 'set1', dx: 0.12, dz: -0.15 },
+  { table: 'set2', dx: 0, dz: 0 },
+  { table: 'gallinera', dx: 0.1, dz: 0 },
+];
 
 export const POTTED_PLANTS: (Placement & { model: 'potted_plant_01' | 'potted_plant_02' })[] = [
   { model: 'potted_plant_01', x: -1.3, z: -5.2, rotYDeg: 30 },
@@ -83,7 +112,7 @@ export function courtyardColliders(): Collider[] {
     box(COFFEE_CART, 1.1, 0.56),
     { kind: 'circle', x: WINE_BARREL.x, z: WINE_BARREL.z, r: 0.38 },
     box(BENCH, 0.6, 0.26),
-    { kind: 'circle', x: STREET_LAMP.x, z: STREET_LAMP.z, r: 0.2 },
+    ...STREET_LAMPS.map((p): Collider => ({ kind: 'circle', x: p.x, z: p.z, r: 0.2 })),
     ...POTTED_PLANTS.map((p): Collider => ({ kind: 'circle', x: p.x, z: p.z, r: p.model === 'potted_plant_01' ? 0.28 : 0.3 })),
     ...PLANTER_ZS.map((z) => box({ x: PLANTER_X, z, rotYDeg: 90 }, 0.46, 0.21)),
     box(GATE, 1.5, 0.08),

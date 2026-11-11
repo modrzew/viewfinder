@@ -1,7 +1,7 @@
 import { HalfFloatType, LinearFilter, NoBlending, RGBAFormat, ShaderMaterial, Vector2, Vector4, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { CONFIG } from '../../config';
-import { BLUR_GLSL, FULLSCREEN_VERT, blurUniforms, setBlurUniforms, type BlurParams } from '../shaders/common';
+import { BLUR_GLSL, FULLSCREEN_VERT, SCENE_COLOR_GLSL, blurUniforms, setBlurUniforms, type BlurParams } from '../shaders/common';
 
 // Interactive DoF preview, after Gustafsson's single-pass bokeh (2018); SPEC §10.4.
 //   1. CoC (half res): colour + signed CoC radius in full-res px.
@@ -16,6 +16,7 @@ export const KERNEL_SIZE = CONFIG.gatherKernelSize;
 
 const COC_FRAG = /* glsl */ `
 ${BLUR_GLSL}
+${SCENE_COLOR_GLSL}
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform vec2 uFullTexel;
@@ -24,7 +25,7 @@ varying vec2 vUv;
 
 void main() {
   // Bilinear at the 2×2 block centre averages the four colours; depth takes the nearest of the four.
-  vec3 c = texture2D(tColor, vUv).rgb;
+  vec3 c = sceneColor(tColor, vUv);
   vec2 h = 0.5 * uFullTexel;
   float d = min(min(texture2D(tDepth, vUv + vec2(-h.x, -h.y)).r, texture2D(tDepth, vUv + vec2(h.x, -h.y)).r),
                 min(texture2D(tDepth, vUv + vec2(-h.x, h.y)).r, texture2D(tDepth, vUv + vec2(h.x, h.y)).r));
@@ -144,6 +145,7 @@ void main() {
 
 const COMPOSITE_FRAG = /* glsl */ `
 ${BLUR_GLSL}
+${SCENE_COLOR_GLSL}
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform sampler2D tBlur;
@@ -151,7 +153,7 @@ uniform float uMaxRadius;
 varying vec2 vUv;
 
 void main() {
-  vec3 sharp = texture2D(tColor, vUv).rgb;
+  vec3 sharp = sceneColor(tColor, vUv);
   vec4 blur = texture2D(tBlur, vUv);
   float coc = min(abs(0.5 * blurDiscPx(planarDepthM(texture2D(tDepth, vUv).r) * 1000.0)), uMaxRadius);
   float t = smoothstep(0.5, 1.5, max(coc, blur.a));

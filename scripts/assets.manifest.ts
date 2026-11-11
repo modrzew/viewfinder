@@ -28,6 +28,7 @@ export const ASSETS: AssetEntry[] = [
   { id: 'flower_gazania', kind: 'model', res: '1k', keepParts: true },
   { id: 'CoffeeCart_01', kind: 'model', res: '1k' },
   { id: 'street_lamp_01', kind: 'model', res: '1k' },
+  { id: 'street_lamp_02', kind: 'model', res: '1k' },
   { id: 'painted_wooden_bench', kind: 'model', res: '1k' },
   { id: 'wine_barrel_01', kind: 'model', res: '1k' },
   { id: 'large_iron_gate', kind: 'model', res: '1k', keepParts: true },
@@ -35,6 +36,10 @@ export const ASSETS: AssetEntry[] = [
   { id: 'cobblestone_floor_06', kind: 'texture', res: '2k' },
   { id: 'clay_plaster', kind: 'texture', res: '1k' },
   { id: 'venice_sunset', kind: 'hdri', res: '4k' },
+  // Other times of day load on demand. Pure skies at 2k keep public/scene/ under budget (§12).
+  { id: 'kloofendal_48d_partly_cloudy_puresky', kind: 'hdri', res: '2k' },
+  { id: 'qwantani_dusk_2_puresky', kind: 'hdri', res: '2k' },
+  { id: 'qwantani_night_puresky', kind: 'hdri', res: '2k' },
 ];
 
 /** Texture maps copied for `texture` entries: Poly Haven map name → file name. */

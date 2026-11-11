@@ -1,12 +1,13 @@
 import { FloatType, HalfFloatType, NoBlending, RGBAFormat, ShaderMaterial, WebGLRenderTarget, type Texture, type WebGLRenderer } from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { BLUR_GLSL, FULLSCREEN_VERT, blurUniforms, setBlurUniforms, type BlurParams } from '../shaders/common';
+import { BLUR_GLSL, FULLSCREEN_VERT, SCENE_COLOR_GLSL, blurUniforms, setBlurUniforms, type BlurParams } from '../shaders/common';
 
 // Running mean of jittered thin-lens samples (§10.2, §10.3), with an optional per-sample residual
 // blur so sparse samples don't show as dotted bokeh on point lights.
 
 const FRAG = /* glsl */ `
 ${BLUR_GLSL}
+${SCENE_COLOR_GLSL}
 uniform sampler2D tSample;
 uniform sampler2D tDepth;
 uniform sampler2D tPrev;
@@ -26,7 +27,7 @@ float residualRadius(vec2 uv) {
 }
 
 void main() {
-  vec3 x = texture2D(tSample, vUv).rgb;
+  vec3 x = sceneColor(tSample, vUv);
   if (uResidualScale > 0.0) {
     float rc = residualRadius(vUv);
     if (rc > 0.5) {
@@ -39,7 +40,7 @@ void main() {
         vec2 uv = vUv + o * uTexel;
         // A tap counts only if its own residual disc reaches this pixel.
         float w = smoothstep(-0.5, 0.5, residualRadius(uv) - length(o));
-        sum += texture2D(tSample, uv).rgb * w;
+        sum += sceneColor(tSample, uv) * w;
         wsum += w;
       }
       x = sum / wsum;

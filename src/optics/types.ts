@@ -9,6 +9,7 @@ export interface CameraBody {
   imagePx: { width: number; height: number };
   cocMm: number;                     // circle of confusion for DoF readouts
   cropFactorNominal: number;         // for "equivalent focal length" display
+  shutterRangeS: { fastest: number; slowest: number };  // nominal powers of two behind the labels (§8.5)
 }
 
 export interface FocalStep { fromFocalMm: number; fNumber: number }
@@ -68,7 +69,7 @@ export interface DerivedOptics {
   roundness: number;                              // 1 = round, 0 = straight blades
   vignetteEv: number;                             // corner falloff in EV (§10.6)
   exposureMode: ExposureMode;
-  shutterS: number;
-  exposureFactor: number;                         // linear brightness multiplier
-  evOffset: number;                               // M mode offset from the lock, in EV
+  shutterS: number;                               // within the body's range
+  exposureFactor: number;                         // linear brightness vs a correct exposure
+  evOffset: number;                               // exposure error in EV: M vs the lock, Av at a shutter limit
 }

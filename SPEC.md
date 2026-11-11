@@ -141,6 +141,7 @@ export interface CameraBody {
   imagePx: { width: number; height: number };
   cocMm: number;                     // circle of confusion for DoF readouts
   cropFactorNominal: number;         // for "equivalent focal length" display
+  shutterRangeS: { fastest: number; slowest: number };  // nominal powers of two behind the labels (§8.5)
 }
 
 export interface FocalStep { fromFocalMm: number; fNumber: number }
@@ -247,11 +248,13 @@ Both DoF renderers must use this function. The GLSL mirrors `optics.ts`, and the
 ### 8.5 Exposure
 
 ```
-Av:  t = N² / 2^EV100        ISO 100; EV100 is a scene constant (12 for the courtyard)
-     image brightness is constant
-M:   on entering M, lock N_lock = N and t_lock = t
-     brightness factor = (N_lock / N)²      EV offset = 2·log2(N_lock / N)
+correct time  t_c = N² / 2^EV100       ISO 100; EV100 is a scene constant, per time of day (§11.8)
+Av:  t = clamp(t_c, fastest, slowest)  the 90D's range is 1/8000 (2^−13 s) to 30″ (2^5 s)
+M:   on entering M, lock N_lock = N and t_lock = t; then t = t_lock
+both: brightness factor = t / t_c       EV offset = log2(t / t_c)
 ```
+
+So Av brightness is constant until the shutter hits a limit (f/1.8 at noon wants 1/10000 and comes out ⅓ EV over). In M at the lock's EV100 the factor is `(N_lock / N)²`; changing the time of day in M changes EV100 and so the exposure, as it would on a camera.
 
 Shutter label: `k = round(3·log2(1/t))`, then look up the Canon nominal label for k:
 
@@ -263,7 +266,9 @@ Shutter label: `k = round(3·log2(1/t))`, then look up the Canon nominal label f
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | label | 1/100 | 1/125 | 1/160 | 1/200 | 1/250 | 1/320 | 1/400 | 1/500 | 1/640 | 1/800 | 1/1000 | 1/1250 | 1/1600 | 1/2000 | 1/2500 | 1/3200 | 1/4000 | 1/5000 | 1/6400 | 1/8000 |
 
-Show the M-mode EV offset in thirds, e.g. `−1⅓ EV`.
+Long exposures (k < 0): `1″3 1″6 2″ 2″5 3″2 4″ 5″ 6″ 8″ 10″ 13″ 15″ 20″ 25″ 30″` for k = −1 … −15.
+
+Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the shutter is at a limit (the info bar then blinks the shutter speed, like the camera).
 
 ### 8.6 Focus slider mapping
 
@@ -320,13 +325,14 @@ Show the M-mode EV offset in thirds, e.g. `−1⅓ EV`.
 | Focus | Slider (§8.6), labelled with the distance. |
 | Exposure | Segmented control: `Av` / `M`. |
 | View | Segmented control: `Camera` / `Eye`. |
+| Time of day | Segmented control: `Noon` / `Golden` / `Evening` / `Night` (§11.8). Courtyard only. Shows sky download progress. |
 | Readout | See below. |
 
 Readout lines:
 - Focal length with equivalent: `35 mm (56 mm equiv.)`.
 - FOV: `H 35.3° · V 24.0° · D 41.9°`.
 - f-number. When clamped, add a hint such as `(widest at 55 mm: f/5.6)`.
-- Shutter: `1/500 · ISO 100` in Av, or `1/500 · −1⅓ EV` in M.
+- Shutter: `1/500 · ISO 100` in Av (`1/8000 · ISO 100 · +⅓ EV` at a limit), or `1/500 · −1⅓ EV` in M.
 - Focus distance.
 - DoF: `1.95 – 2.05 m (11 cm)` or `2.13 m – ∞`.
 - Hyperfocal distance.
@@ -348,6 +354,7 @@ The viewfinder info bar shows a compact subset: focal length, f-number, shutter,
 | V | Camera / Eye view. |
 | X | Av / M. |
 | L | Next lens. |
+| T | Next time of day (courtyard only). |
 | R | Back to spawn. |
 | H | Help overlay. |
 
@@ -365,15 +372,18 @@ interface Settings {
   exposureMode: 'Av' | 'M';
   manualLock: { fNumber: number; shutterS: number } | null;
   view: 'camera' | 'eye';
+  timeOfDay: 'noon' | 'golden' | 'evening' | 'night';
 }
 interface Runtime {
   centreDistanceM: number | null;                   // null = sky
   refine: { samples: number; target: number };
   loading: { loadedBytes: number; totalBytes: number } | null;
+  ev100: number;                                    // of the lighting on screen
+  timeOfDayLoading: { timeOfDay; loadedBytes; totalBytes } | null;
 }
 ```
 
-- **Defaults:** EOS 90D, 50mm, f/1.8, focus 1.0 m, Av, camera view.
+- **Defaults:** EOS 90D, 50mm, f/1.8, focus 1.0 m, Av, camera view, golden hour.
 - **Lens switch:**
   - Clamp the focal length to the new range.
   - Keep focus, clamped to the new lens's closest focus.
@@ -492,7 +502,7 @@ r          = mix(roundness.wideOpen, roundness.stoppedDown, clamp(Δ / roundness
 - Draws the predicted bokeh circle `b_px(centre distance)` around the reticle, so the render can be compared with the maths by eye.
 - Has keys to toggle individual passes.
 
-## 11. Scene: golden-hour café courtyard
+## 11. Scene: café courtyard
 
 ### 11.1 Intent
 
@@ -520,7 +530,9 @@ Coordinates are in metres: +x right, −z forward from spawn, y up. Tune by eye.
 | Hero table | Outdoor table set centred at (0, 0, −0.7). Props on it: tea set, croissant, small potted plant, vase, lantern, all 0.5–1.0 m from the spawn eye. |
 | Other tables | Three more table sets at about (−3, −4), (3.5, −6), (−2, −11); a gallinera table and chairs at (4, −12) |
 | Props | Coffee cart at (6, −3); wine barrel with bottles at (−5, −7); bench along the east side; potted plants near the tables |
-| Street lamp | At (5, −16), with an emissive head |
+| Post lamps | At (5, −16) and by the gate at (−8.15, −16.15), with emissive heads |
+| Wall lanterns | Eight `street_lamp_02` brackets at 2.3 m on facade bay joints: north at x = −6, 0, 6; east at z = −20, −11, −2; south wall at x = ±4.5 |
+| Table lanterns | `Lantern_01` with a candle on every table |
 | String lights | Four strands across x −8…8 at z = −3, −8, −13, −18. 3.6 m high at the ends, 0.5 m catenary sag, a bulb every 0.5 m (~130 bulbs). |
 
 ### 11.3 Assets (Poly Haven, all CC0)
@@ -538,19 +550,25 @@ Coordinates are in metres: +x right, −z forward from spawn, y up. Tune by eye.
 | Potted plants | `potted_plant_01`, `potted_plant_02` | 1k | 8.9 MB |
 | Planter + plants | `planter_box_01`, `shrub_03`, `flower_gazania` | 1k | 6.7 MB |
 | Coffee cart | `CoffeeCart_01` | 1k | 1.8 MB |
-| Street lamp | `street_lamp_01` | 1k | 2.2 MB |
+| Post lamps | `street_lamp_01` | 1k | 2.2 MB |
+| Wall lanterns | `street_lamp_02` | 1k | 2.2 MB |
 | Bench | `painted_wooden_bench` | 1k | 2.0 MB |
 | Wine barrel | `wine_barrel_01` | 1k | 0.9 MB |
 | Gate | `large_iron_gate` | 1k | 3.1 MB |
 | Facades | `modular_urban_apartments_facade` | 1k | 16.5 MB |
 | Ground texture | `cobblestone_floor_06` (diff, nor_gl, arm) | 2k | ≤ 12 MB |
 | Wall texture | `clay_plaster` (diff, nor_gl, arm) | 1k | ≤ 4 MB |
-| Sky + lighting | `venice_sunset` HDRI | 4k `.hdr` | 22.8 MB |
+| Sky + lighting, golden hour | `venice_sunset` HDRI | 4k `.hdr` | 22.8 MB |
+| Noon sky | `kloofendal_48d_partly_cloudy_puresky` | 2k `.hdr` | 5.5 MB |
+| Evening sky | `qwantani_dusk_2_puresky` | 2k `.hdr` | 4.6 MB |
+| Night sky | `qwantani_night_puresky` | 2k `.hdr` | 5.5 MB |
 
-- The raw total is about 110 MB. After meshopt + WebP it should be about 55–70 MB; the budget check (§12) verifies this.
+- The raw total is about 130 MB. After meshopt + WebP it's about 64 MB; the budget check (§12) verifies this. The extra skies are 2k because three more 4k ones would break the budget; pure skies are smooth enough for it.
 - Poly Haven's trees are too heavy for this budget (`jacaranda_tree` is 215 MB at 1k), so the MVP has no trees. Greenery comes from planters, shrubs and potted plants.
 
 ### 11.4 Lighting
+
+This is golden hour; §11.8 covers the other times of day.
 
 - **HDRI:** `venice_sunset` serves as `scene.environment` (via PMREM) and as `scene.background`.
   - Rotate both (`backgroundRotation` / `environmentRotation`) so the sun sits over the open west side, ~70° left of the spawn view. That side-lights the spawn view.
@@ -559,8 +577,8 @@ Coordinates are in metres: +x right, −z forward from spawn, y up. Tune by eye.
   - Store the azimuth and elevation in the scene config. A dev helper logs the direction of the brightest HDRI texel.
   - Warm colour, a 4096² PCF soft shadow map covering the courtyard, rendered once.
 - **Bulbs:** emissive only, no light per bulb. Warm (~2700 K) colour. In linear terms, make them ~20–50× scene mid-grey so they read as bright bokeh balls.
-- **Lantern:** one small warm `PointLight`, no shadows.
-- **Scene constants:** `baseExposure`, `EV100 = 12`.
+- **Lantern:** one small warm `PointLight` on the hero table, no shadows. The other lanterns' flames glow but cast no light.
+- **Scene constants:** `baseExposure = 1.3`, `EV100 = 12`.
 
 ### 11.5 String lights
 
@@ -580,6 +598,26 @@ Used to verify the optics. Built in code, with no downloads:
 - a grey checkerboard ground with 1 m lines
 - targets at 0.5, 1, 2, 4, 8, 16 and 32 m along −z, each a card with its distance printed on it and a tiny bright emissive sphere (point source) on top
 - a gradient sky
+
+### 11.8 Times of day
+
+`scene/courtyardLighting.ts` holds a preset per time of day; `scene/timeOfDay.ts` is the plain list shared with the UI.
+
+| | Noon | Golden hour | Evening | Night |
+|---|---|---|---|---|
+| EV100 | 15 | 12 | 9 | 7.5 |
+| Sky | `kloofendal_48d…` | `venice_sunset` | `qwantani_dusk_2…` | `qwantani_night…` |
+| Sun | From the sky, 48° up, 125° left of the spawn view | As §11.4 | Set; the afterglow sits in the west | None |
+| Lamps | Off: plain glass bulbs, no flames | Glow, as §11.4 | On | On |
+| Lit windows | — | — | 35% | 55% |
+
+- **Exposure follows EV100:** `baseExposure = 1.3 · 2^(12 − EV100)`. All lights share one set of units, so lamps keep the same emissive and intensity at every time of day; they only look brighter at night because the exposure is longer. Tune sky, sun and environment intensities per preset, not the exposure.
+- **Environment below background:** the walls hide much of the sky, which image-based light ignores, so `environmentIntensity` is about half of `backgroundIntensity` (as at golden hour).
+- **Noon sun:** texels above a clamp are taken out of the HDRI before PMREM, and the irradiance removed becomes the `DirectionalLight` (colour and intensity). The sun then lights the scene once, with shadows. Its shadow camera is fitted to the courtyard.
+- **Lamps on:** festoons get 4 stand-in `PointLight`s per strand carrying the bulbs' luminous intensity (emissive × projected area); post lamps are `SpotLight`s with 1024² shadows; wall lanterns and candles are `PointLight`s without shadows. The dark interior behind the windows goes black, since point lights shine through walls.
+- **Lit windows:** a glow plane (curtain texture, per-window warm tint and dimming) behind each opening, picked by a fixed hash. The facade glass is opaque, so it turns 20% opaque while windows are lit.
+- **Switching:** only the initial sky loads with the scene; others download on first use, with progress in the panel. The Viewer relights the scene, compiles the new shaders with `compileAsync` while the old image stays up, re-renders the shadow maps and resets refinement. A newer choice supersedes one still loading.
+- **Overflow guard:** the noon sun's glints can overflow the half-float scene target. The passes read scene colour through `sceneColor()`, which clamps to the largest finite half and drops NaN.
 
 ## 12. Asset pipeline and budget
 
@@ -635,7 +673,9 @@ Each milestone ends in something you can run and check.
 3. **Estimated values:** the 18-55 aperture breakpoints, vignetting amounts, bokeh roundness and EV100.
 4. **Preview artefacts.** The interactive preview has artefacts at depth edges, and glass blurs only approximately. Refined mode is correct.
 5. **Refinement cost** is roughly 256 × the scene's render cost. If it's too slow, lower the sample target or the resolution in `config.ts`.
-6. **No metering.** EV100 is fixed per scene, so pointing at the bright sky doesn't change the Av shutter speed.
+6. **No metering.** EV100 is fixed per time of day, so pointing at the bright sky doesn't change the Av shutter speed.
+7. **Night costs more.** Night and evening add ~30 lights, so each refinement sample costs more than at golden hour. Not yet measured on the reference machine.
+8. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
 
 ## 16. Adding cameras and lenses later
 

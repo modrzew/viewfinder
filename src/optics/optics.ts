@@ -102,9 +102,13 @@ export function vignetteEv(lens: Lens, focalMm: number, delta: number): number {
   return vignetteCornerEvAt(lens, focalMm) * Math.min(Math.max(1 - delta / 2, 0), 1) + 0.15;
 }
 
-/** Av-mode shutter time at ISO 100: t = N² / 2^EV100. */
+/** Correct shutter time at ISO 100: t = N² / 2^EV100. */
 export function avShutterS(fNumber: number, ev100: number): number {
   return (fNumber * fNumber) / Math.pow(2, ev100);
+}
+
+export function clampShutterS(body: CameraBody, tS: number): number {
+  return Math.min(Math.max(tS, body.shutterRangeS.fastest), body.shutterRangeS.slowest);
 }
 
 export function clampFocusM(lens: Lens, focusM: number): number {
@@ -127,10 +131,13 @@ export function deriveOptics(
   const dof = dofLimitsMm(f, n, c, focusM * 1000);
   const fov = fieldOfView(body, f);
 
+  // Av picks the correct time unless the body's range stops it; M keeps the locked time. Either way the
+  // image brightness is the actual time over the correct one, so M at the lock's EV gives (N_lock / N)².
   const lock = settings.exposureMode === 'M' ? settings.manualLock : null;
-  const shutterS = lock ? lock.shutterS : avShutterS(n, ev100);
-  const exposureFactor = lock ? (lock.fNumber / n) ** 2 : 1;
-  const evOffset = lock ? 2 * Math.log2(lock.fNumber / n) : 0;
+  const correctS = avShutterS(n, ev100);
+  const shutterS = lock ? lock.shutterS : clampShutterS(body, correctS);
+  const exposureFactor = shutterS / correctS;
+  const evOffset = Math.log2(exposureFactor);
 
   return {
     body,

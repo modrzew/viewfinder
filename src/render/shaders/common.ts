@@ -24,6 +24,16 @@ float planarDepthM(float depth) {
 }
 `;
 
+// Scene colour as read by the passes after the render. The scene target is half float, so a very bright
+// texel (the noon sun, a sharp glint of it) can overflow to Inf; blur and accumulation would spread that, so
+// reads clamp to the largest finite half and drop NaN.
+export const SCENE_COLOR_GLSL = /* glsl */ `
+vec3 sceneColor(sampler2D t, vec2 uv) {
+  vec3 c = texture2D(t, uv).rgb;
+  return min(mix(c, vec3(0.0), isnan(c)), vec3(65504.0));
+}
+`;
+
 export const FULLSCREEN_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() {

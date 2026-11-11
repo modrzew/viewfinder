@@ -1,6 +1,6 @@
 # Viewfinder
 
-Walk through a golden-hour café courtyard and see it the way a Canon EOS 90D would: the lens sets the framing, and the aperture and focus set the depth of field and bokeh. Hold still and the image refines from a fast preview to physically correct blur.
+Walk through a café courtyard at noon, golden hour, evening or night and see it the way a Canon EOS 90D would: the lens sets the framing, and the aperture and focus set the depth of field and bokeh. Hold still and the image refines from a fast preview to physically correct blur.
 
 - Body: Canon EOS 90D (APS-C)
 - Lenses: EF 50mm f/1.8 STM, EF-S 18-55mm f/4-5.6 IS STM
@@ -22,10 +22,13 @@ See [SPEC.md](SPEC.md) for the optics model, rendering design and known limitati
 | V | Camera view / eye view |
 | X | Exposure mode Av / M |
 | L | Next lens |
+| T | Time of day: noon, golden hour, evening, night |
 | R | Back to spawn |
 | H | Help |
 
 The panel on the right has the same controls plus a readout: focal length, field of view, f-number, shutter speed, focus distance, depth of field, hyperfocal distance and the distance to whatever is under the centre AF point.
+
+Each time of day has its own sky and light level, so the Av shutter speed changes with it (ISO stays at 100). At noon the widest apertures need more than the 90D's 1/8000, so the image overexposes and the shutter speed blinks, as on the camera. An exposure locked in M carries over when you change the time of day. Golden hour loads with the scene; the other skies download the first time you pick them.
 
 URL options:
 
@@ -68,7 +71,7 @@ All scene assets are CC0 from [Poly Haven](https://polyhaven.com). Credit isn't 
 | [Tea Set 01](https://polyhaven.com/a/tea_set_01) | Teapot, cups, plates | James Ray Cock, Rico Cilliers, Jurita Burger |
 | [Croissant](https://polyhaven.com/a/croissant) | Hero table | Greg Zaal, Dario Barresi |
 | [Potted Plant 04](https://polyhaven.com/a/potted_plant_04) | Table plants | James Ray Cock |
-| [Lantern 01](https://polyhaven.com/a/Lantern_01) | Hero table lantern | Rajil Jose Macatangay |
+| [Lantern 01](https://polyhaven.com/a/Lantern_01) | Table lanterns | Rajil Jose Macatangay |
 | [Ceramic Vase 01](https://polyhaven.com/a/ceramic_vase_01) | Vases | James Ray Cock |
 | [Wine Bottles 01](https://polyhaven.com/a/wine_bottles_01) | Bottles on the barrel | Rico Cilliers, Jurita Burger |
 | [Gallinera Table](https://polyhaven.com/a/gallinera_table) | Bistro table | Ulan Cabanilla |
@@ -79,13 +82,17 @@ All scene assets are CC0 from [Poly Haven](https://polyhaven.com). Credit isn't 
 | [Shrub 03](https://polyhaven.com/a/shrub_03) | Planter shrubs | Rico Cilliers |
 | [Flower Gazania](https://polyhaven.com/a/flower_gazania) | Planter flowers | James Ray Cock, Jenelle van Heerden |
 | [Coffee Cart 01](https://polyhaven.com/a/CoffeeCart_01) | Coffee cart | Joe Seabuhr |
-| [Street Lamp 01](https://polyhaven.com/a/street_lamp_01) | Street lamp | Josh Dean |
+| [Street Lamp 01](https://polyhaven.com/a/street_lamp_01) | Post lamps | Josh Dean |
+| [Street Lamp 02](https://polyhaven.com/a/street_lamp_02) | Wall lanterns | Josh Dean |
 | [Painted Wooden Bench](https://polyhaven.com/a/painted_wooden_bench) | Bench | Kirill Sannikov |
 | [Wine Barrel 01](https://polyhaven.com/a/wine_barrel_01) | Wine barrel | James Ray Cock |
 | [Large Iron Gate](https://polyhaven.com/a/large_iron_gate) | Gate | Josh Dean |
 | [Modular Urban Apartments Facade](https://polyhaven.com/a/modular_urban_apartments_facade) | Apartment facades | James Ray Cock |
 | [Cobblestone Floor 06](https://polyhaven.com/a/cobblestone_floor_06) | Ground | Amal Kumar |
 | [Clay Plaster](https://polyhaven.com/a/clay_plaster) | South wall | Amal Kumar |
-| [Venice Sunset](https://polyhaven.com/a/venice_sunset) | Sky and lighting | Greg Zaal |
+| [Venice Sunset](https://polyhaven.com/a/venice_sunset) | Golden-hour sky and lighting | Greg Zaal |
+| [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) | Noon sky | Greg Zaal, Jarod Guest |
+| [Qwantani Dusk 2 (Pure Sky)](https://polyhaven.com/a/qwantani_dusk_2_puresky) | Evening sky | Greg Zaal, Jarod Guest |
+| [Qwantani Night (Pure Sky)](https://polyhaven.com/a/qwantani_night_puresky) | Night sky | Greg Zaal, Jarod Guest |
 
 Rendering uses [three.js](https://threejs.org) and [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh). The depth-of-field techniques follow Haeberli & Akeley, "The Accumulation Buffer" (SIGGRAPH 1990), and Dennis Gustafsson, "Bokeh depth of field in a single pass" (2018).

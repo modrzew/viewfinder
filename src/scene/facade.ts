@@ -77,3 +77,23 @@ export function buildFacade(kit: Object3D, bays: Bay[]): Group {
   });
   return facade;
 }
+
+export interface Opening {
+  /** Centre of the module's opening area in facade coordinates (front at z = 0). */
+  x: number;
+  y: number;
+  /** 0 = ground-floor door, 1–3 = window storeys. */
+  storey: number;
+}
+
+/** Glazed openings of a facade from `buildFacade`: upper-storey windows and ground-floor doors. */
+export function facadeOpenings(bays: Bay[]): Opening[] {
+  const out: Opening[] = [];
+  bays.forEach((bay, i) => {
+    if (bay.type === 'blank') return;
+    const x = i * MODULE_W + MODULE_W / 2;
+    if (bay.door) out.push({ x, y: STOREY_H / 2, storey: 0 });
+    for (let s = 1; s <= 3; s++) out.push({ x, y: STOREY_H * s + STOREY_H / 2, storey: s });
+  });
+  return out;
+}

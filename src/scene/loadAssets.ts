@@ -9,6 +9,28 @@ const BASE = '/scene/';
 
 export interface PbrTextures { diff: Texture; nor: Texture; arm: Texture }
 
+let manifest: Promise<Record<string, number>> | null = null;
+
+/** File sizes from public/scene/manifest.json, so progress can show a total up front. */
+function fileSizes(): Promise<Record<string, number>> {
+  manifest ??= fetch(`${BASE}manifest.json`).then(async (r) => ((await r.json()) as { files: Record<string, number> }).files);
+  return manifest;
+}
+
+/** One sky, loaded on demand (another time of day). */
+export async function loadHdri(
+  file: string,
+  onProgress: (loadedBytes: number, totalBytes: number) => void,
+): Promise<DataTexture> {
+  const path = `hdri/${file}`;
+  const total = (await fileSizes())[path] ?? 0;
+  onProgress(0, total);
+  const hdr = new HDRLoader().setDataType(HalfFloatType);
+  const tex = await hdr.loadAsync(BASE + path, (e) => onProgress(Math.min(e.loaded, total || e.loaded), total));
+  onProgress(total, total);
+  return tex;
+}
+
 export interface CourtyardAssets {
   models: Record<string, Group>;
   textures: Record<string, PbrTextures>;
@@ -21,8 +43,8 @@ export async function loadCourtyardAssets(
   hdri: string,
   onProgress: (loadedBytes: number, totalBytes: number) => void,
 ): Promise<CourtyardAssets> {
-  const manifest: { files: Record<string, number> } = await (await fetch(`${BASE}manifest.json`)).json();
-  const size = (path: string) => manifest.files[path] ?? 0;
+  const sizes = await fileSizes();
+  const size = (path: string) => sizes[path] ?? 0;
 
   const wanted = [
     ...models.map((m) => `models/${m}.glb`),

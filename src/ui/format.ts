@@ -17,9 +17,15 @@ export function fNumberHint(o: DerivedOptics): string | null {
   return null;
 }
 
+/** Av at the end of the body's shutter range: the camera can't expose correctly and over- or underexposes. */
+export function avOutOfRange(o: DerivedOptics): boolean {
+  return o.exposureMode === 'Av' && Math.round(o.evOffset * 3) !== 0;
+}
+
 export function shutterText(o: DerivedOptics): string {
   const t = shutterLabel(o.shutterS);
-  return o.exposureMode === 'Av' ? `${t} · ISO 100` : `${t} · ${formatEvThirds(o.evOffset)}`;
+  if (o.exposureMode === 'M') return `${t} · ${formatEvThirds(o.evOffset)}`;
+  return avOutOfRange(o) ? `${t} · ISO 100 · ${formatEvThirds(o.evOffset)}` : `${t} · ISO 100`;
 }
 
 function lengthText(m: number): string {

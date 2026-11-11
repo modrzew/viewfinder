@@ -2,14 +2,12 @@ import { useEffect, useRef } from 'react';
 import { formatDistanceM } from '../optics/focusScale';
 import { formatFNumber, shutterLabel } from '../optics/stops';
 import { frameRect } from '../render/layout';
-import { Viewer } from '../render/Viewer';
-import type { WebGLRenderer } from 'three';
-import type { SceneSetup } from '../scene/types';
+import { Viewer, type ViewerOptions } from '../render/Viewer';
 import { useOptics, useStore } from '../state/store';
 import { DebugOverlay } from './DebugOverlay';
 import { FrameLines } from './FrameLines';
 import { LoadingScreen } from './LoadingScreen';
-import { centreText } from './format';
+import { avOutOfRange, centreText } from './format';
 
 function InfoBar() {
   const o = useOptics();
@@ -21,7 +19,10 @@ function InfoBar() {
     <div className="infobar">
       <span>{Math.round(o.focalMm)}<small>mm</small></span>
       <span>{formatFNumber(o.fNumber)}</span>
-      <span>{shutterLabel(o.shutterS)}{o.exposureMode === 'M' && <small> M</small>}</span>
+      {/* Blinks like the camera's display when Av runs out of shutter speeds. */}
+      <span className={avOutOfRange(o) ? 'blink' : undefined}>
+        {shutterLabel(o.shutterS)}{o.exposureMode === 'M' && <small> M</small>}
+      </span>
       <span><small>FOCUS </small>{formatDistanceM(o.focusM)}</span>
       <span><small>DOF </small>{dof}</span>
       <span><small>⌖ </small>{centreText(centre)}</span>
@@ -36,7 +37,7 @@ function RefineIndicator() {
 }
 
 export function Viewport({ loadScene, debug }: {
-  loadScene: (renderer: WebGLRenderer) => Promise<SceneSetup>;
+  loadScene: ViewerOptions['loadScene'];
   debug: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);

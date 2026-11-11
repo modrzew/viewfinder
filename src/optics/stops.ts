@@ -11,6 +11,11 @@ export const SHUTTER_LABELS: readonly string[] = [
   '1/1000', '1/1250', '1/1600', '1/2000', '1/2500', '1/3200', '1/4000', '1/5000', '1/6400', '1/8000',
 ];
 
+/** Canon nominal labels for long exposures, k = −1, −2, … */
+export const LONG_SHUTTER_LABELS: readonly string[] = [
+  '1″3', '1″6', '2″', '2″5', '3″2', '4″', '5″', '6″', '8″', '10″', '13″', '15″', '20″', '25″', '30″',
+];
+
 /** Index of the stop closest to `n` (in log space). */
 export function nearestStopIndex(n: number): number {
   let best = 0;
@@ -35,7 +40,8 @@ export function shutterIndex(tS: number): number {
 
 export function shutterLabel(tS: number): string {
   const k = shutterIndex(tS);
-  return SHUTTER_LABELS[Math.min(Math.max(k, 0), SHUTTER_LABELS.length - 1)];
+  if (k >= 0) return SHUTTER_LABELS[Math.min(k, SHUTTER_LABELS.length - 1)];
+  return LONG_SHUTTER_LABELS[Math.min(-k, LONG_SHUTTER_LABELS.length) - 1];
 }
 
 const THIRDS = ['', '⅓', '⅔'];

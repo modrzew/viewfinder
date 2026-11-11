@@ -11,7 +11,8 @@ import { getLens } from '../optics/lenses';
 import { deriveOptics } from '../optics/optics';
 import type { DerivedOptics } from '../optics/types';
 import { useStore, type RenderMode, type Settings } from '../state/store';
-import type { SceneSetup } from '../scene/types';
+import type { TimeOfDay } from '../scene/timeOfDay';
+import type { Lighting, SceneSetup } from '../scene/types';
 import { FpsController } from './FpsController';
 import { applyThinLensSample, type ThinLens } from './jitteredProjection';
 import { eyeVfovDeg, frameRect, renderSize, type Rect } from './layout';
@@ -24,7 +25,11 @@ import { FULLSCREEN_VERT, type BlurParams } from './shaders/common';
 const RAD = Math.PI / 180;
 
 export interface ViewerOptions {
-  loadScene: (renderer: WebGLRenderer) => Promise<SceneSetup>;
+  loadScene: (
+    renderer: WebGLRenderer,
+    timeOfDay: TimeOfDay,
+    onProgress: (loadedBytes: number, totalBytes: number) => void,
+  ) => Promise<SceneSetup>;
 }
 
 /**
@@ -57,6 +62,12 @@ export class Viewer {
   private readonly copyQuad = new FullScreenQuad(this.copyMaterial);
 
   private setup: SceneSetup | null = null;
+  private lighting: Lighting | null = null;
+  /** Time of day on screen, and one whose sky is loading or whose shaders are compiling. */
+  private timeOfDay: TimeOfDay | null = null;
+  private pendingTimeOfDay: TimeOfDay | null = null;
+  /** Set while new lighting's shaders compile in the background; the old image stays up meanwhile. */
+  private compiling = false;
   private rangefinder: Rangefinder | null = null;
   private disposed = false;
   private raf = 0;
@@ -79,6 +90,7 @@ export class Viewer {
   private poseKey: number[] = [];
   private rect: Rect = { x: 0, y: 0, width: 0, height: 0 };
   private settings: Settings | null = null;
+  private opticsEv100 = 0;
   private optics: DerivedOptics | null = null;
 
   private apertureKey = '';
@@ -111,15 +123,18 @@ export class Viewer {
     container.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('pointerlockchange', this.onLockChange);
 
-    options.loadScene(this.renderer).then(
+    // A disposed viewer's load (React StrictMode mounts twice in dev) must not bring the loading screen back.
+    const onProgress = (loadedBytes: number, totalBytes: number) => {
+      if (!this.disposed) useStore.getState().setRuntime({ loading: { loadedBytes, totalBytes } });
+    };
+    options.loadScene(this.renderer, useStore.getState().settings.timeOfDay, onProgress).then(
       (setup) => {
         if (this.disposed) return setup.dispose();
         this.setup = setup;
+        this.timeOfDay = setup.timeOfDay?.initial ?? null;
         this.controller.setWorld(setup.spawn, setup.colliders, setup.walkArea);
         this.rangefinder = new Rangefinder(setup.scene);
-        this.renderer.shadowMap.needsUpdate = true;
-        this.settings = null;
-        this.invalidate();
+        this.setLighting(setup.lighting);
         useStore.getState().setRuntime({ loading: null });
       },
       (err: unknown) => useStore.getState().setRuntime({ error: String(err) }),
@@ -165,6 +180,54 @@ export class Viewer {
     this.opticalKey = [];
   }
 
+  private setLighting(lighting: Lighting): void {
+    this.lighting = lighting;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.invalidate();
+    useStore.getState().setRuntime({ ev100: lighting.ev100 });
+  }
+
+  /**
+   * Follows the requested time of day: download its sky, relight the scene, compile the new shaders without
+   * blocking, then show it. A newer request supersedes one still in flight.
+   */
+  private syncTimeOfDay(wanted: TimeOfDay): void {
+    const control = this.setup?.timeOfDay;
+    if (!control || this.compiling || wanted === this.pendingTimeOfDay) return;
+    const setRuntime = useStore.getState().setRuntime;
+    if (wanted === this.timeOfDay) {
+      if (this.pendingTimeOfDay) setRuntime({ timeOfDayLoading: null });
+      this.pendingTimeOfDay = null;
+      return;
+    }
+    this.pendingTimeOfDay = wanted;
+    setRuntime({ timeOfDayLoading: { timeOfDay: wanted, loadedBytes: 0, totalBytes: 0 } });
+    control
+      .load(wanted, (loadedBytes, totalBytes) => {
+        if (this.pendingTimeOfDay === wanted) setRuntime({ timeOfDayLoading: { timeOfDay: wanted, loadedBytes, totalBytes } });
+      })
+      .then(async () => {
+        if (this.disposed || this.pendingTimeOfDay !== wanted) return;
+        const lighting = control.apply(wanted);
+        this.timeOfDay = wanted;
+        this.compiling = true;
+        try {
+          await this.renderer.compileAsync(this.setup!.scene, this.camera);
+        } finally {
+          this.compiling = false;
+        }
+        if (this.disposed) return;
+        this.pendingTimeOfDay = null;
+        setRuntime({ timeOfDayLoading: null });
+        this.setLighting(lighting);
+      })
+      .catch((err: unknown) => {
+        if (this.pendingTimeOfDay !== wanted) return;
+        this.pendingTimeOfDay = null;
+        setRuntime({ timeOfDayLoading: null, error: `Couldn't load the ${wanted} sky: ${String(err)}` });
+      });
+  }
+
   private supportsFloat32Targets(): boolean {
     const gl = this.renderer.getContext();
     return !!gl.getExtension('EXT_color_buffer_float');
@@ -185,15 +248,20 @@ export class Viewer {
 
     const state = useStore.getState();
     const { settings, runtime } = state;
-    if (settings !== this.settings) {
+    const ev100 = this.lighting?.ev100 ?? runtime.ev100;
+    if (settings !== this.settings || ev100 !== this.opticsEv100) {
       this.settings = settings;
-      this.optics = deriveOptics(getBody(settings.bodyId), getLens(settings.lensId), settings, this.setup?.ev100);
+      this.opticsEv100 = ev100;
+      this.optics = deriveOptics(getBody(settings.bodyId), getLens(settings.lensId), settings, ev100);
     }
     const optics = this.optics!;
     const view = settings.view;
 
     this.layout(runtime.viewport.width, runtime.viewport.height, view, optics.imageAspect);
     if (!this.setup || this.rect.width <= 0) return;
+    this.syncTimeOfDay(settings.timeOfDay);
+    // The scene is already relit for the new time of day, but its shaders aren't ready: keep the last image.
+    if (this.compiling) return;
 
     const activeVfov = view === 'eye' ? this.eyeCamera.fov : optics.vfovDeg;
     this.controller.update(dt, Math.tan((activeVfov / 2) * RAD) / Math.tan((CONFIG.lookReferenceVfovDeg / 2) * RAD));
@@ -206,7 +274,7 @@ export class Viewer {
       this.sceneRT.width, this.sceneRT.height, passes.gather, passes.refine, passes.residual];
     const changed = !sameKey(key, this.opticalKey);
     this.opticalKey = key;
-    const exposureKey = [optics.exposureFactor, optics.vignetteEv, passes.vignette, this.setup.baseExposure];
+    const exposureKey = [optics.exposureFactor, optics.vignetteEv, passes.vignette, this.lighting!.baseExposure];
     const exposureChanged = !sameKey(exposureKey, this.exposureKey);
     this.exposureKey = exposureKey;
 
@@ -381,7 +449,7 @@ export class Viewer {
     const vignette = this.settings!.view === 'camera' && useStore.getState().debug.passes.vignette;
     this.lensPass.render(this.renderer, preview, refined, {
       mix,
-      exposure: this.setup!.baseExposure * o.exposureFactor,
+      exposure: this.lighting!.baseExposure * o.exposureFactor,
       vignetteEv: vignette ? o.vignetteEv : 0,
     });
     this.output.render(this.renderer, null as never, this.lensPass.target, 0, false);

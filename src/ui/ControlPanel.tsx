@@ -3,6 +3,7 @@ import { BODIES, getBody } from '../optics/bodies';
 import { FOCUS_SLIDER_MAX, focusMToSlider, formatDistanceM, sliderToFocusM } from '../optics/focusScale';
 import { isZoom, lensesFor } from '../optics/lenses';
 import { formatFNumber, stopsWithin } from '../optics/stops';
+import { TIMES_OF_DAY } from '../scene/timeOfDay';
 import { useOptics, useStore } from '../state/store';
 import { Readout } from './Readout';
 
@@ -12,6 +13,10 @@ const release = (e: PointerEvent<HTMLElement>) => e.currentTarget.blur();
 const ZOOM_TICKS = [18, 24, 35, 45, 55];
 const FOCUS_TICKS = [1, 3, 10, 100, Infinity];
 const FULL_STOPS = [1.8, 2.8, 4, 5.6, 8, 11, 16, 22, 32];
+
+function loadingText({ loadedBytes, totalBytes }: { loadedBytes: number; totalBytes: number }): string {
+  return totalBytes > 0 && loadedBytes < totalBytes ? `Loading sky ${Math.round((loadedBytes / totalBytes) * 100)}%` : 'Loading…';
+}
 
 function Field({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
   return (
@@ -60,8 +65,9 @@ function Segmented<T extends string>({ value, options, onChange }: {
   );
 }
 
-export function ControlPanel() {
+export function ControlPanel({ timeOfDay }: { timeOfDay: boolean }) {
   const settings = useStore((s) => s.settings);
+  const todLoading = useStore((s) => s.runtime.timeOfDayLoading);
   const o = useOptics();
   const s = useStore.getState();
   const body = getBody(settings.bodyId);
@@ -163,6 +169,16 @@ export function ControlPanel() {
           ]}
         />
       </Field>
+
+      {timeOfDay && (
+        <Field label="Time of day" value={todLoading ? loadingText(todLoading) : undefined}>
+          <Segmented
+            value={settings.timeOfDay}
+            onChange={s.setTimeOfDay}
+            options={TIMES_OF_DAY.map((t) => ({ value: t.id, label: t.label, hint: t.hint }))}
+          />
+        </Field>
+      )}
 
       <Readout />
     </aside>

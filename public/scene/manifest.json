@@ -1,8 +1,12 @@
 {
   "files": {
+    "hdri/qwantani_night_puresky_2k.hdr": 5461210,
     "hdri/venice_sunset_4k.hdr": 22841596,
+    "hdri/qwantani_dusk_2_puresky_2k.hdr": 4612798,
+    "hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr": 5451493,
     "models/flower_gazania.glb": 530376,
     "models/potted_plant_04.glb": 1035276,
+    "models/street_lamp_02.glb": 272960,
     "models/Lantern_01.glb": 1366008,
     "models/wine_barrel_01.glb": 349200,
     "models/gallinera_chair.glb": 313108,

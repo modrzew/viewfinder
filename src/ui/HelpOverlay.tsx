@@ -11,6 +11,7 @@ const CONTROLS: [string, string][] = [
   ['V', 'Camera / Eye view'],
   ['X', 'Exposure mode Av / M'],
   ['L', 'Next lens'],
+  ['T', 'Time of day: noon, golden hour, evening, night'],
   ['R', 'Back to spawn'],
   ['H', 'This help'],
 ];
