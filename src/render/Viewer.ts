@@ -14,6 +14,7 @@ import { useStore, type RenderMode, type Settings } from '../state/store';
 import type { TimeOfDay } from '../scene/timeOfDay';
 import type { Lighting, SceneSetup } from '../scene/types';
 import { FpsController } from './FpsController';
+import { FrameStats } from './FrameStats';
 import { applyThinLensSample, type ThinLens } from './jitteredProjection';
 import { eyeVfovDeg, frameRect, renderSize, type Rect } from './layout';
 import { Accumulator } from './passes/Accumulator';
@@ -44,6 +45,7 @@ export class Viewer {
   private readonly eyeCamera = new PerspectiveCamera();
   private readonly basePosition = new Vector3();
   private readonly controller: FpsController;
+  private readonly stats: FrameStats;
 
   private sceneRT: WebGLRenderTarget;
   private readonly previewRT = new WebGLRenderTarget(1, 1, { type: HalfFloatType, format: RGBAFormat, depthBuffer: false });
@@ -100,8 +102,6 @@ export class Viewer {
 
   private lastRangeTime = 0;
   private rangePoseKey: number[] = [];
-  private fpsFrames = 0;
-  private fpsTime = 0;
   private wheelAccum = 0;
 
   constructor(container: HTMLElement, options: ViewerOptions) {
@@ -117,6 +117,7 @@ export class Viewer {
     this.sceneRT = this.makeSceneTarget(1, 1);
     this.accumulator = new Accumulator(this.supportsFloat32Targets());
     this.output.renderToScreen = true;
+    this.stats = new FrameStats(this.renderer);
     useStore.getState().setRuntime({ refine: { samples: 0, target: this.refineTarget } });
 
     this.controller = new FpsController(container);
@@ -160,6 +161,7 @@ export class Viewer {
     this.output.dispose();
     this.copyMaterial.dispose();
     this.copyQuad.dispose();
+    this.stats.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.canvas.remove();
@@ -241,10 +243,15 @@ export class Viewer {
 
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);
+    this.stats.begin();
+    this.tick(now);
+    this.stats.end(now);
+  };
+
+  private tick(now: number): void {
     const dt = this.lastTime ? Math.min((now - this.lastTime) / 1000, 0.1) : 0;
     this.frameMs = this.lastTime ? now - this.lastTime : 16;
     this.lastTime = now;
-    this.trackFps(now);
 
     const state = useStore.getState();
     const { settings, runtime } = state;
@@ -287,7 +294,7 @@ export class Viewer {
     if (state.debug.mode !== this.mode || state.debug.samplesPerFrame !== this.samplesPerFrame) {
       state.setDebug({ mode: this.mode, samplesPerFrame: this.mode === 'REFINING' ? this.samplesPerFrame : 0 });
     }
-  };
+  }
 
   private renderEye(changed: boolean): void {
     if (changed) {
@@ -507,17 +514,6 @@ export class Viewer {
     const d = this.rangefinder.measure(this.camera);
     const state = useStore.getState();
     if (d !== state.runtime.centreDistanceM) state.setRuntime({ centreDistanceM: d });
-  }
-
-  private trackFps(now: number): void {
-    this.fpsFrames++;
-    if (!this.fpsTime) this.fpsTime = now;
-    if (now - this.fpsTime >= 500) {
-      const fps = (this.fpsFrames * 1000) / (now - this.fpsTime);
-      this.fpsFrames = 0;
-      this.fpsTime = now;
-      useStore.getState().setDebug({ fps });
-    }
   }
 
   private onWheel = (e: WheelEvent) => {

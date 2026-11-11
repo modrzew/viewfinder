@@ -39,7 +39,11 @@ export interface Runtime {
 }
 
 export interface DebugInfo {
+  /** Frames that drew something, per second, and their average cost (null when none drew). */
   fps: number;
+  cpuMs: number | null;
+  /** Also null when the browser has no GPU timer queries. */
+  gpuMs: number | null;
   mode: RenderMode;
   samplesPerFrame: number;
   passes: { gather: boolean; refine: boolean; vignette: boolean; residual: boolean };
@@ -119,6 +123,8 @@ export const useStore = create<Store>()((set, get) => {
     },
     debug: {
       fps: 0,
+      cpuMs: null,
+      gpuMs: null,
       mode: 'INTERACTIVE',
       samplesPerFrame: 0,
       passes: { gather: true, refine: true, vignette: true, residual: true },

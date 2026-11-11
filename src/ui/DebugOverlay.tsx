@@ -1,5 +1,21 @@
 import { blurPxAt } from '../optics/optics';
-import { useOptics, useStore } from '../state/store';
+import { useOptics, useStore, type DebugInfo } from '../state/store';
+
+/** "idle" once a still image is finished and nothing is left to draw. */
+function frameStats({ fps, cpuMs, gpuMs, mode }: DebugInfo): string {
+  // On a slow GPU a frame can outlast the averaging window, so 0 fps alone doesn't mean idle.
+  if (fps === 0 && mode === 'DONE') return 'idle';
+  const parts = [`${fps.toFixed(0)} fps`];
+  if (cpuMs !== null) parts.push(`CPU ${cpuMs.toFixed(1)} ms`);
+  if (gpuMs !== null) parts.push(`GPU ${gpuMs.toFixed(1)} ms`);
+  return parts.join(' · ');
+}
+
+/** Always on; the debug overlay takes its place with `?debug=1`. */
+export function FpsCounter() {
+  const debug = useStore((s) => s.debug);
+  return <div className="debug">{frameStats(debug)}</div>;
+}
 
 /** `?debug=1`: timings, mode, and the predicted bokeh circle for the centre distance (§10.8). */
 export function DebugOverlay({ frameWidth }: { frameWidth: number }) {
@@ -18,7 +34,7 @@ export function DebugOverlay({ frameWidth }: { frameWidth: number }) {
   return (
     <>
       <div className="debug">
-        <div>{debug.fps.toFixed(0)} fps · {debug.mode}</div>
+        <div>{frameStats(debug)} · {debug.mode}</div>
         <div>samples {refine.samples}/{refine.target} · {debug.samplesPerFrame}/frame</div>
         <div>render {renderPx.width}×{renderPx.height}</div>
         <div>predicted bokeh {bRender.toFixed(1)} px</div>

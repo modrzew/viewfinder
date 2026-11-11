@@ -30,10 +30,12 @@ The panel on the right has the same controls plus a readout: focal length, field
 
 Each time of day has its own sky and light level, so the Av shutter speed changes with it (ISO stays at 100). At noon the widest apertures need more than the 90D's 1/8000, so the image overexposes and the shutter speed blinks, as on the camera. An exposure locked in M carries over when you change the time of day. Golden hour loads with the scene; the other skies download the first time you pick them.
 
+The counter in the top-left corner shows frames drawn per second and their average CPU and GPU time. GPU time needs timer queries, which Chrome has and Safari and Firefox don't. Rendering follows `requestAnimationFrame`, so fps can't go above the display's refresh rate; GPU time shows how much headroom is left. Once a still image has finished refining, nothing is drawn and the counter reads idle.
+
 URL options:
 
 - `?scene=test` loads the optics test scene: distance cards from 0.5 to 32 m with point sources, and a 1 m card at 2.24 m that exactly fills the 50 mm frame.
-- `?debug=1` shows fps, render mode and sample count, draws the predicted bokeh circle around the AF point, and lets keys 1–4 toggle the gather preview, refinement, vignetting and residual blur.
+- `?debug=1` adds the render mode and sample count to the fps counter, draws the predicted bokeh circle around the AF point, and lets keys 1–4 toggle the gather preview, refinement, vignetting and residual blur.
 
 ## Development
 

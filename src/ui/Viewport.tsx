@@ -4,7 +4,7 @@ import { formatFNumber, shutterLabel } from '../optics/stops';
 import { frameRect } from '../render/layout';
 import { Viewer, type ViewerOptions } from '../render/Viewer';
 import { useOptics, useStore } from '../state/store';
-import { DebugOverlay } from './DebugOverlay';
+import { DebugOverlay, FpsCounter } from './DebugOverlay';
 import { FrameLines } from './FrameLines';
 import { LoadingScreen } from './LoadingScreen';
 import { avOutOfRange, centreText } from './format';
@@ -78,7 +78,7 @@ export function Viewport({ loadScene, debug }: {
         ) : (
           <FrameLines width={r.width} height={r.height} />
         )}
-        {debug && <DebugOverlay frameWidth={r.width} />}
+        {debug ? <DebugOverlay frameWidth={r.width} /> : <FpsCounter />}
       </div>
       <LoadingScreen />
       {!locked && !helpOpen && <div className="lock-hint">Click to look around · <kbd>H</kbd> help</div>}
