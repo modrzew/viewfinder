@@ -39,7 +39,7 @@ export interface Runtime {
 }
 
 export interface DebugInfo {
-  /** Frames that drew something, per second, and their average cost (null when none drew). */
+  /** Frames the GPU finished per second, and the average cost of frames drawn (null when none were). */
   fps: number;
   cpuMs: number | null;
   /** Also null when the browser has no GPU timer queries. */
