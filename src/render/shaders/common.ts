@@ -27,10 +27,14 @@ float planarDepthM(float depth) {
 // Scene colour as read by the passes after the render. The scene target is half float, so a very bright
 // texel (the noon sun, a sharp glint of it) can overflow to Inf; blur and accumulation would spread that, so
 // reads clamp to the largest finite half and drop NaN.
+//
+// NaN is found from the bits: drivers that compile with fast-math may fold isnan() to false (Apple's OpenGL,
+// which Firefox uses on macOS, among them), and a NaN that reaches the accumulator stays for every sample.
 export const SCENE_COLOR_GLSL = /* glsl */ `
 vec3 sceneColor(sampler2D t, vec2 uv) {
   vec3 c = texture2D(t, uv).rgb;
-  return min(mix(c, vec3(0.0), isnan(c)), vec3(65504.0));
+  bvec3 nan = greaterThan(floatBitsToUint(c) & uvec3(0x7fffffffu), uvec3(0x7f800000u));
+  return min(mix(c, vec3(0.0), nan), vec3(65504.0));
 }
 `;
 

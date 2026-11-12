@@ -52,6 +52,11 @@ export class LensPass {
   });
   private readonly quad = new FullScreenQuad(this.material);
 
+  /** For precompiling. */
+  get materials(): ShaderMaterial[] {
+    return [this.material];
+  }
+
   setSize(w: number, h: number): void {
     this.target.setSize(w, h);
     this.material.uniforms.uAspect.value = w / h;

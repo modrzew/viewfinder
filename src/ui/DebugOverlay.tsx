@@ -35,8 +35,8 @@ export function DebugOverlay({ frameWidth }: { frameWidth: number }) {
     <>
       <div className="debug">
         <div>{frameStats(debug)} · {debug.mode}</div>
-        <div>samples {refine.samples}/{refine.target} · {debug.samplesPerFrame}/frame</div>
-        <div>render {renderPx.width}×{renderPx.height}</div>
+        <div>samples {refine.samples}/{refine.target} · {debug.samplesPerFrame}/batch</div>
+        <div>render {renderPx.width}×{renderPx.height} · preview ×{debug.previewScale}</div>
         <div>predicted bokeh {bRender.toFixed(1)} px</div>
         <div className="debug-keys">
           1 gather {flag(p.gather)} · 2 refine {flag(p.refine)} · 3 vignette {flag(p.vignette)} · 4 residual {flag(p.residual)}

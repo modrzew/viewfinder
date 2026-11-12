@@ -1,6 +1,6 @@
 import {
-  AgXToneMapping, DepthTexture, FloatType, HalfFloatType, PerspectiveCamera, RGBAFormat, WebGLRenderer,
-  WebGLRenderTarget,
+  AgXToneMapping, BufferGeometry, DepthTexture, Float32BufferAttribute, FloatType, Group, HalfFloatType, Mesh,
+  PerspectiveCamera, RGBAFormat, WebGLRenderer, WebGLRenderTarget, type Scene,
 } from 'three';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CONFIG } from '../config';
@@ -10,8 +10,10 @@ import type { DerivedOptics } from '../optics/types';
 import { opticsFor, useStore, type RenderMode, type RefineProgress, type Settings } from '../state/store';
 import type { TimeOfDay } from '../scene/timeOfDay';
 import type { Lighting, SceneSetup } from '../scene/types';
-import { FpsController } from './FpsController';
-import { Finder, sameKey, type Passes } from './Finder';
+import { compileWithoutStalling, gpuIdle, syncSignaled } from './compileShaders';
+import { DynamicResolution } from './DynamicResolution';
+import { FpsController, type Pose } from './FpsController';
+import { Finder, previewSize, sameKey, type Passes } from './Finder';
 import { FrameStats } from './FrameStats';
 import { eyeVfovDeg, finderRects, frameLineFractions, frameRect, hudScale, renderSize, type Rect } from './layout';
 import { CropPass } from './passes/CropPass';
@@ -47,9 +49,21 @@ export class Viewer {
   private readonly stats: FrameStats;
   private readonly float32: boolean;
 
-  /** The eye image, kept so side by side can crop it; and the scratch target finders render into. */
+  /**
+   * The eye image, kept so side by side can crop it; and the scratch target finders render samples into, at
+   * their full size. While dynamic resolution has scaled things down (§10.2), moving renders the eye image into
+   * `eyeScaledRT` and previews into `previewSceneRT`; both are null at scale 1, when the full-size ones serve.
+   */
   private eyeRT: WebGLRenderTarget;
+  private eyeScaledRT: WebGLRenderTarget | null = null;
+  /** Whichever eye target holds the current eye image. */
+  private eyeImage: WebGLRenderTarget;
   private sceneRT: WebGLRenderTarget;
+  private previewSceneRT: WebGLRenderTarget | null = null;
+  private readonly dynamicResolution = new DynamicResolution();
+  private previewScale = 1;
+  /** Whether this frame rendered something new because something optical changed, for dynamic resolution. */
+  private interactiveFrame = false;
   private readonly eyeLens = new LensPass();
   private readonly crop = new CropPass();
   private readonly output = new OutputPass();
@@ -69,13 +83,16 @@ export class Viewer {
   private disposed = false;
   private raf = 0;
   private lastTime = 0;
-  private frameMs = 16;
 
   private screen: Screen | null = null;
-  private samplesPerFrame = 1;
-  /** GPU fence after the last sample batch, and how many frames it has been pending. */
-  private fence: WebGLSync | null = null;
-  private fenceFrames = 0;
+  /**
+   * Refinement batch size and queue depth as one level, adapted by adaptRefineLevel(): 0 is one sample with
+   * one batch queued, n ≥ 1 is n samples per batch with `refineBatchesInFlight` batches queued.
+   */
+  private refineLevel = 1;
+  private refineBatchesInFlight: number = CONFIG.refineBatchesInFlight;
+  /** Sample batches the GPU hasn't finished, oldest first, each with its fence and when it was issued. */
+  private readonly batches: { sync: WebGLSync; issuedAt: number }[] = [];
   private eyeKey: unknown[] = [];
   private eyeExposureKey: unknown[] = [];
   private poseKey: number[] = [];
@@ -106,6 +123,7 @@ export class Viewer {
     this.renderer.shadowMap.autoUpdate = false;
 
     this.eyeRT = makeSceneTarget(1, 1);
+    this.eyeImage = this.eyeRT;
     this.sceneRT = makeSceneTarget(1, 1);
     this.float32 = !!this.renderer.getContext().getExtension('EXT_color_buffer_float');
     this.output.renderToScreen = true;
@@ -121,18 +139,28 @@ export class Viewer {
     const onProgress = (loadedBytes: number, totalBytes: number) => {
       if (!this.disposed) useStore.getState().setRuntime({ loading: { loadedBytes, totalBytes } });
     };
-    options.loadScene(this.renderer, useStore.getState().settings.timeOfDay, onProgress).then(
-      (setup) => {
+    options.loadScene(this.renderer, useStore.getState().settings.timeOfDay, onProgress)
+      .then(async (setup) => {
+        if (this.disposed) return setup.dispose();
+        // The loading screen stays up while shaders compile, so the first frame doesn't freeze the page.
+        const loading = useStore.getState().runtime.loading;
+        if (loading) useStore.getState().setRuntime({ loading: { ...loading, stage: 'shaders' } });
+        this.rangefinder = new Rangefinder(setup.scene);
+        await this.precompile(setup.scene);
         if (this.disposed) return setup.dispose();
         this.setup = setup;
         this.timeOfDay = setup.timeOfDay?.initial ?? null;
         this.controller.setWorld(setup.spawn, setup.colliders, setup.walkArea);
-        this.rangefinder = new Rangefinder(setup.scene);
         this.setLighting(setup.lighting);
-        useStore.getState().setRuntime({ loading: null });
-      },
-      (err: unknown) => useStore.getState().setRuntime({ error: String(err) }),
-    );
+        // The first frame still compiles what precompile() can't reach (shadow-map depth, the sky background, the
+        // output pass) and whatever the driver builds on first draw. Keep the loading screen over it.
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await gpuIdle(this.renderer);
+        if (!this.disposed) useStore.getState().setRuntime({ loading: null });
+      })
+      .catch((err: unknown) => {
+        if (!this.disposed) useStore.getState().setRuntime({ error: String(err) });
+      });
 
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -140,14 +168,16 @@ export class Viewer {
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    this.dropFence();
+    this.dropBatches();
     this.controller.dispose();
     this.container.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('pointerlockchange', this.onLockChange);
     this.rangefinder?.dispose();
     this.setup?.dispose();
     this.eyeRT.dispose();
+    this.eyeScaledRT?.dispose();
     this.sceneRT.dispose();
+    this.previewSceneRT?.dispose();
     this.cameraFinder?.dispose();
     for (const f of this.finders.values()) f.dispose();
     this.eyeLens.dispose();
@@ -174,6 +204,74 @@ export class Viewer {
     this.eyeKey = [];
     this.cameraFinder?.invalidate();
     for (const f of this.finders.values()) f.invalidate();
+  }
+
+  /** Back to the scene's spawn point. */
+  resetPose(): void {
+    this.controller.resetToSpawn();
+  }
+
+  get pose(): Readonly<Pose> {
+    return this.controller.pose;
+  }
+
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /** The time of day on screen once the scene is loaded and nothing is switching; null otherwise. */
+  get settledTimeOfDay(): TimeOfDay | null {
+    return this.setup && !this.compiling && !this.pendingTimeOfDay ? this.timeOfDay : null;
+  }
+
+  /** Whether the scene is loaded and on screen. */
+  get ready(): boolean {
+    return this.setup !== null && useStore.getState().runtime.loading === null;
+  }
+
+  /** Frame counters since start (FrameStats). */
+  get frameTotals(): Readonly<FrameStats['totals']> {
+    return this.stats.totals;
+  }
+
+  /** The GPU as the browser reports it (Firefox and Safari round it to a family, e.g. "Apple M1, or similar"). */
+  get gpuName(): string {
+    const gl = this.renderer.getContext();
+    const name = String(gl.getParameter(gl.RENDERER));
+    if (name !== 'WebKit WebGL') return name;
+    // Chrome masks RENDERER but still has the debug extension (which Firefox deprecates and doesn't need).
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    return debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : name;
+  }
+
+  /** Benchmark: how many sample batches to keep queued (1 is the old scheme); restarts the adaptation. */
+  setRefineBatchesInFlight(n: number): void {
+    this.refineBatchesInFlight = n;
+    this.refineLevel = 1;
+  }
+
+  /**
+   * Compiles the scene's materials and the passes' without blocking the main thread (see compileShaders.ts).
+   * Finders share their passes' programs, and the camera view's finder lives as long as the viewer, so finders
+   * made later (side by side) find them compiled.
+   */
+  private precompile(scene: Scene): Promise<void> {
+    const s = useStore.getState().settings;
+    this.cameraFinder ??= new Finder(s.lensId, this.refineTarget, this.float32);
+    // Attributes select the program variant too: like FullScreenQuad's triangle, position and uv but no normals.
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
+    geometry.setAttribute('uv', new Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
+    const passes = new Group();
+    for (const m of [...this.cameraFinder.materials, ...this.eyeLens.materials, ...this.crop.materials]) {
+      passes.add(new Mesh(geometry, m));
+    }
+    // The camera only selects lights by layer; its pose doesn't matter here.
+    return compileWithoutStalling(this.renderer, [
+      { object: scene, camera: this.eyeCamera, target: this.sceneRT },
+      // Every pass draws into a render target, so any one selects the right variant.
+      { object: passes, camera: this.eyeCamera, target: this.cameraFinder.previewRT },
+    ]).finally(() => geometry.dispose());
   }
 
   private setLighting(lighting: Lighting): void {
@@ -208,7 +306,7 @@ export class Viewer {
         this.timeOfDay = wanted;
         this.compiling = true;
         try {
-          await this.renderer.compileAsync(this.setup!.scene, this.eyeCamera);
+          await compileWithoutStalling(this.renderer, [{ object: this.setup!.scene, camera: this.eyeCamera, target: this.sceneRT }]);
         } finally {
           this.compiling = false;
         }
@@ -233,7 +331,6 @@ export class Viewer {
 
   private tick(now: number): void {
     const dt = this.lastTime ? Math.min((now - this.lastTime) / 1000, 0.1) : 0;
-    this.frameMs = this.lastTime ? now - this.lastTime : 16;
     this.lastTime = now;
 
     const state = useStore.getState();
@@ -266,9 +363,14 @@ export class Viewer {
     redraw ||= screen !== this.screen;
     this.screen = screen;
     const passes = state.debug.passes;
+    this.interactiveFrame = false;
     if (screen !== 'camera') redraw = this.updateEye(selected) || redraw;
     if (finders.length) redraw = this.updateFinders(finders, screen, now, passes, settings.lensId) || redraw;
     if (redraw) this.draw(screen, finders);
+
+    // Runs of interactive frames set the preview resolution; layout() applies a new scale next frame.
+    if (!this.interactiveFrame) this.dynamicResolution.idle();
+    else if (this.dynamicResolution.frame(now, this.stats.lastCpuMs)) this.previewScale = this.dynamicResolution.scale;
 
     this.updateRangefinder(now);
     this.publish(screen, finders);
@@ -318,6 +420,17 @@ export class Viewer {
       this.eyeRT.dispose();
       this.eyeRT = makeSceneTarget(size.width, size.height);
       this.eyeLens.setSize(size.width, size.height);
+      this.eyeImage = this.eyeRT;
+    }
+    if (screen !== 'camera') {
+      const s = this.previewScale;
+      const scaled = scaledTarget(this.eyeScaledRT, previewSize(size.width, s), previewSize(size.height, s), s < 1);
+      if (scaled !== this.eyeScaledRT) {
+        // The eye image may have been in the old one: render it again.
+        this.eyeScaledRT = scaled;
+        this.eyeImage = this.eyeRT;
+        this.eyeKey = [];
+      }
     }
 
     // Finder rectangles in buffer px, snapped to whole pixels so each is drawn 1:1.
@@ -328,12 +441,17 @@ export class Viewer {
         x: Math.round(f.x * k), y: Math.round(f.y * k), width: Math.round(f.width * k), height: Math.round(f.height * k),
       }));
     finders.forEach((f, i) => {
-      if (f.setRect(rects[i])) changed = true;
+      if (f.setRect(rects[i], this.previewScale)) changed = true;
     });
+    // Every finder is the same size: samples render at it, previews at it times the preview scale.
     const scene = rects[0];
     if (scene && (this.sceneRT.width !== scene.width || this.sceneRT.height !== scene.height)) {
       this.sceneRT.dispose();
       this.sceneRT = makeSceneTarget(scene.width, scene.height);
+    }
+    if (scene) {
+      const s = this.previewScale;
+      this.previewSceneRT = scaledTarget(this.previewSceneRT, previewSize(scene.width, s), previewSize(scene.height, s), s < 1);
     }
     return changed;
   }
@@ -354,21 +472,27 @@ export class Viewer {
 
   /**
    * The eye image: rendered only when the pose, the size or the lighting changed, at the selected lens's
-   * exposure without vignetting (§10.6). Returns true if it changed.
+   * exposure without vignetting (§10.6). While moving it renders at the dynamic-resolution scale, and once
+   * still, once more at full resolution. Returns true if it changed.
    */
   private updateEye(selected: DerivedOptics): boolean {
     const key = [...this.poseKey, this.eyeRT.width, this.eyeRT.height];
-    const changed = !sameKey(key, this.eyeKey);
+    const moved = !sameKey(key, this.eyeKey);
     this.eyeKey = key;
-    if (changed) {
-      this.renderer.setRenderTarget(this.eyeRT);
+    const target = moved ? (this.eyeScaledRT ?? this.eyeRT) : this.eyeImage !== this.eyeRT ? this.eyeRT : null;
+    if (target) {
+      this.renderer.setRenderTarget(target);
       this.renderer.render(this.setup!.scene, this.eyeCamera);
+      this.eyeImage = target;
     }
+    if (moved) this.interactiveFrame = true;
     const exposure = this.lighting!.baseExposure * selected.exposureFactor;
     const exposureChanged = !sameKey([exposure], this.eyeExposureKey);
     this.eyeExposureKey = [exposure];
-    if (changed || exposureChanged) this.eyeLens.render(this.renderer, this.eyeRT.texture, null, { mix: 0, exposure, vignetteEv: 0 });
-    return changed || exposureChanged;
+    if (target || exposureChanged) {
+      this.eyeLens.render(this.renderer, this.eyeImage.texture, null, { mix: 0, exposure, vignetteEv: 0 });
+    }
+    return !!target || exposureChanged;
   }
 
   /** One frame of every finder's state machine (§10.1). Returns true if what any of them shows changed. */
@@ -376,10 +500,14 @@ export class Viewer {
     const baseExposure = this.lighting!.baseExposure;
     for (const f of finders) {
       const changed = f.sync(this.controller.pose, this.optics.get(f.lensId)!, passes, baseExposure);
-      if (changed) this.renderPreview(f, screen === 'sideBySide', passes.gather);
-      else f.settle(passes.refine);
+      if (changed) {
+        this.renderPreview(f, screen === 'sideBySide', passes.gather);
+        this.interactiveFrame = true;
+      } else {
+        f.settle(passes.refine);
+      }
     }
-    this.refine(finders, selectedId, passes.residual);
+    this.refine(finders, selectedId, passes.residual, now);
     let changed = false;
     for (const f of finders) {
       f.fade(now);
@@ -398,72 +526,93 @@ export class Viewer {
    */
   private renderPreview(f: Finder, sideBySide: boolean, gather: boolean): void {
     const o = f.optics!;
+    // At the preview scale; the eye image may be scaled too, so the upscale is measured on what's there.
+    const target = this.previewSceneRT ?? this.sceneRT;
+    const eye = this.eyeImage;
     const crop = sideBySide ? frameLineFractions(o.hfovDeg, o.vfovDeg, this.eyeCamera.aspect) : null;
     const cropOk = crop && crop.halfWidth <= 1 && crop.halfHeight <= 1
-      && f.rect.width / (crop.halfWidth * this.eyeRT.width) <= CONFIG.sideBySide.cropMaxUpscale;
+      && target.width / (crop.halfWidth * eye.width) <= CONFIG.sideBySide.cropMaxUpscale;
     if (cropOk) {
-      this.crop.render(this.renderer, this.eyeRT, this.sceneRT, crop.halfWidth, crop.halfHeight);
+      this.crop.render(this.renderer, eye, target, crop.halfWidth, crop.halfHeight);
     } else {
-      this.renderer.setRenderTarget(this.sceneRT);
+      this.renderer.setRenderTarget(target);
       this.renderer.render(this.setup!.scene, f.camera);
     }
-    if (gather) f.gatherPreview(this.renderer, this.sceneRT);
-    else this.crop.render(this.renderer, this.sceneRT, f.previewRT, 1, 1);
+    if (gather) f.gatherPreview(this.renderer, target);
+    else this.crop.render(this.renderer, target, f.previewRT, 1, 1);
   }
 
   /**
-   * Thin-lens samples for the refining finders (§10.3), sharing one batch per frame. The finder with the fewest
-   * samples goes next, the selected lens first on a tie, so they converge together.
+   * Thin-lens samples for the refining finders (§10.3), sharing the batches. The finder with the fewest samples
+   * goes next, the selected lens first on a tie, so they converge together.
    */
-  private refine(finders: Finder[], selectedId: string, residual: boolean): void {
+  private refine(finders: Finder[], selectedId: string, residual: boolean, now: number): void {
     const queue = finders.filter((f) => f.needsSamples);
     if (queue.length === 0) {
-      this.dropFence();
+      this.dropBatches();
       return;
     }
-    if (!this.batchDone()) return;
-    const rank = (f: Finder) => (f.lensId === selectedId ? -1 : finders.indexOf(f));
-    const sampled = new Set<Finder>();
-    for (let i = 0; i < this.samplesPerFrame && queue.length; i++) {
-      queue.sort((a, b) => a.samples - b.samples || rank(a) - rank(b));
-      const f = queue[0];
-      f.renderSample(this.renderer, this.setup!.scene, this.sceneRT, this.jitter, CONFIG.residualBlur && residual);
-      sampled.add(f);
-      if (!f.needsSamples) queue.shift();
-    }
-    for (const f of sampled) f.restoreCamera();
+    this.collectBatches(now);
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    gl.flush();
+    const rank = (f: Finder) => (f.lensId === selectedId ? -1 : finders.indexOf(f));
+    const depth = this.refineLevel === 0 ? 1 : this.refineBatchesInFlight;
+    while (this.batches.length < depth && queue.length) {
+      const sampled = new Set<Finder>();
+      for (let i = 0; i < this.batchSize && queue.length; i++) {
+        queue.sort((a, b) => a.samples - b.samples || rank(a) - rank(b));
+        const f = queue[0];
+        f.renderSample(this.renderer, this.setup!.scene, this.sceneRT, this.jitter, CONFIG.residualBlur && residual);
+        sampled.add(f);
+        if (!f.needsSamples) queue.shift();
+      }
+      for (const f of sampled) f.restoreCamera();
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      if (!sync) break;
+      this.batches.push({ sync, issuedAt: now });
+    }
+  }
+
+  private get batchSize(): number {
+    return Math.max(1, this.refineLevel);
   }
 
   /**
    * Nothing reaches the screen while samples accumulate, so the browser applies no back-pressure and the
-   * frame interval says nothing about GPU load. Instead each batch ends with a fence, and k ∈ [1, 16]
-   * adapts so a batch completes within ~33 ms (§10.1). Returns false while the last batch is in flight.
+   * frame interval says nothing about GPU load. Instead each batch ends with a fence (§10.1). Finished batches
+   * are noticed once per frame, so with one batch queued the GPU idles from finishing it until the next frame
+   * issues another, and longer in Firefox, where commands also pass through its GPU process. With two queued
+   * it moves straight on to the next.
    */
-  private batchDone(): boolean {
-    if (!this.fence) return true;
+  private collectBatches(now: number): void {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    this.fenceFrames++;
-    if (gl.getSyncParameter(this.fence, gl.SYNC_STATUS) !== gl.SIGNALED) return false;
-    gl.deleteSync(this.fence);
-    this.fence = null;
-    const batchMs = this.fenceFrames * this.frameMs;
-    const k = this.samplesPerFrame;
-    if (batchMs <= CONFIG.targetFrameMs * 0.6) this.samplesPerFrame = Math.min(CONFIG.maxSamplesPerFrame, k + 1);
-    else if (batchMs > CONFIG.targetFrameMs * 1.5) {
-      this.samplesPerFrame = Math.max(1, Math.floor((k * CONFIG.targetFrameMs) / batchMs));
+    while (this.batches.length && syncSignaled(gl, this.batches[0].sync)) {
+      const b = this.batches.shift()!;
+      gl.deleteSync(b.sync);
+      this.adaptRefineLevel(now - b.issuedAt, this.batches.length === 0);
     }
-    this.fenceFrames = 0;
-    return true;
   }
 
-  private dropFence(): void {
-    if (!this.fence) return;
-    (this.renderer.getContext() as WebGL2RenderingContext).deleteSync(this.fence);
-    this.fence = null;
-    this.fenceFrames = 0;
+  /**
+   * `latencyMs`: from issuing a batch to seeing it done, queue wait included, which is how long a change could
+   * wait behind refinement; it should stay near targetFrameMs. `drained`: nothing else was queued, so the GPU
+   * may have idled; a bigger batch keeps it busier.
+   */
+  private adaptRefineLevel(latencyMs: number, drained: boolean): void {
+    const target = CONFIG.targetFrameMs;
+    const level = this.refineLevel;
+    if (latencyMs > target * 1.5) {
+      // Down to 0 when even one sample per batch is too slow to keep two queued.
+      this.refineLevel = Math.floor((level * target) / latencyMs);
+    } else if (latencyMs <= target * 0.6 || (drained && this.refineBatchesInFlight > 1 && latencyMs <= target)) {
+      this.refineLevel = Math.min(level + 1, CONFIG.maxSamplesPerBatch);
+    }
+  }
+
+  private dropBatches(): void {
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    for (const b of this.batches) gl.deleteSync(b.sync);
+    this.batches.length = 0;
   }
 
   /**
@@ -484,8 +633,11 @@ export class Viewer {
     const state = useStore.getState();
     const mode: RenderMode = finders.some((f) => f.mode === 'INTERACTIVE') ? 'INTERACTIVE'
       : finders.some((f) => f.mode === 'REFINING') ? 'REFINING' : 'DONE';
-    const samplesPerFrame = mode === 'REFINING' ? this.samplesPerFrame : 0;
-    if (state.debug.mode !== mode || state.debug.samplesPerFrame !== samplesPerFrame) state.setDebug({ mode, samplesPerFrame });
+    const samplesPerFrame = mode === 'REFINING' ? this.batchSize : 0;
+    const d = state.debug;
+    if (d.mode !== mode || d.samplesPerFrame !== samplesPerFrame || d.previewScale !== this.previewScale) {
+      state.setDebug({ mode, samplesPerFrame, previewScale: this.previewScale });
+    }
 
     const refine = finders.length
       ? { samples: sum(finders, (f) => f.samples), target: sum(finders, (f) => f.refineTarget) }
@@ -534,6 +686,13 @@ function makeSceneTarget(w: number, h: number): WebGLRenderTarget {
   const rt = new WebGLRenderTarget(w, h, { type: HalfFloatType, format: RGBAFormat, depthBuffer: true });
   rt.depthTexture = new DepthTexture(w, h, FloatType);
   return rt;
+}
+
+/** `rt` at w × h when `want`, else null; reuses it if the size matches and disposes it otherwise. */
+function scaledTarget(rt: WebGLRenderTarget | null, w: number, h: number, want: boolean): WebGLRenderTarget | null {
+  if (want && rt && rt.width === w && rt.height === h) return rt;
+  rt?.dispose();
+  return want ? makeSceneTarget(w, h) : null;
 }
 
 function clampTarget(n: number): number {

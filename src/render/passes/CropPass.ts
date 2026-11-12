@@ -33,6 +33,11 @@ export class CropPass {
   });
   private readonly quad = new FullScreenQuad(this.material);
 
+  /** For precompiling. */
+  get materials(): ShaderMaterial[] {
+    return [this.material];
+  }
+
   /** Copies the centred crop with half extents `scaleX`, `scaleY` of `source` into `target`, filling it. */
   render(renderer: WebGLRenderer, source: WebGLRenderTarget, target: WebGLRenderTarget, scaleX: number, scaleY: number): void {
     const u = this.material.uniforms;

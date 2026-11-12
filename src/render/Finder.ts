@@ -1,4 +1,7 @@
-import { HalfFloatType, PerspectiveCamera, RGBAFormat, Vector3, WebGLRenderTarget, type Object3D, type WebGLRenderer } from 'three';
+import {
+  HalfFloatType, PerspectiveCamera, RGBAFormat, Vector3, WebGLRenderTarget, type Object3D, type ShaderMaterial,
+  type WebGLRenderer,
+} from 'three';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CONFIG } from '../config';
 import { apertureSamples, gatherKernel, makeApertureShape } from '../optics/aperture';
@@ -28,7 +31,10 @@ export class Finder {
   /** The centred camera; thin-lens samples move it and shear its frustum, then restore it. */
   readonly camera = new PerspectiveCamera();
   mode: RenderMode = 'INTERACTIVE';
-  /** Where it's drawn on the canvas, buffer px from the top left; its buffers are this size. */
+  /**
+   * Where it's drawn on the canvas, buffer px from the top left. The accumulation is this size; the preview is
+   * this times the dynamic-resolution scale (§10.2), and LensPass upsamples it.
+   */
   rect: Rect = { x: 0, y: 0, width: 0, height: 0 };
   optics: DerivedOptics | null = null;
   /** What it shows changed: LensPass has to run again and the screen be redrawn. */
@@ -45,6 +51,9 @@ export class Finder {
   /** Crossfade from the preview to the accumulation (§10.1), and the sample count it was presented at. */
   private mix = 0;
   private presentedCount = 0;
+  private presentedAt = 0;
+  /** Dynamic-resolution scale for the next preview; the preview buffers follow at the next optical change. */
+  private previewScale = 1;
   private opticalKey: unknown[] = [];
   private exposureKey: unknown[] = [];
 
@@ -66,18 +75,35 @@ export class Finder {
     return this.mode === 'REFINING' && this.accumulator.count < this.refineTarget;
   }
 
-  /** Places it on the canvas, resizing its buffers if needed. Returns true if anything moved. */
-  setRect(r: Rect): boolean {
+  /** Its passes' materials, for precompiling (compileShaders.ts). */
+  get materials(): ShaderMaterial[] {
+    return [...this.gather.materials, ...this.accumulator.materials, ...this.lensPass.materials];
+  }
+
+  /**
+   * Places it on the canvas, resizing its buffers if needed. Returns true if anything moved. A new
+   * `previewScale` alone changes nothing yet: the preview is resized when it's next rendered, so a finder off
+   * screen (camera view's, side by side) keeps the image it has.
+   */
+  setRect(r: Rect, previewScale = 1): boolean {
+    this.previewScale = previewScale;
     const same = r.x === this.rect.x && r.y === this.rect.y && r.width === this.rect.width && r.height === this.rect.height;
     if (same) return false;
     if (r.width !== this.rect.width || r.height !== this.rect.height) {
-      this.previewRT.setSize(r.width, r.height);
       this.accumulator.setSize(r.width, r.height);
-      this.gather.setSize(r.width, r.height);
       this.lensPass.setSize(r.width, r.height);
     }
     this.rect = r;
     return true;
+  }
+
+  /** Before rendering a preview: its buffers at the rect times the current scale. */
+  private sizePreview(): void {
+    const pw = previewSize(this.rect.width, this.previewScale);
+    const ph = previewSize(this.rect.height, this.previewScale);
+    if (pw === this.previewRT.width && ph === this.previewRT.height) return;
+    this.previewRT.setSize(pw, ph);
+    this.gather.setSize(pw, ph);
   }
 
   /**
@@ -112,6 +138,7 @@ export class Finder {
       this.mix = 0;
       this.presentedCount = 0;
       this.accumulator.reset();
+      this.sizePreview();
       this.dirty = true;
     }
     return changed;
@@ -122,10 +149,13 @@ export class Finder {
     this.opticalKey = [];
   }
 
-  /** Gather DoF from a scene render or crop of this view at this finder's size (§10.4). */
+  /** Gather DoF from a scene render or crop of this view at the preview's size (§10.4). */
   gatherPreview(renderer: WebGLRenderer, scene: WebGLRenderTarget): void {
     this.updateApertureShape();
-    this.gather.render(renderer, scene.texture, scene.depthTexture!, this.previewRT, this.blurParams(), CONFIG.gatherMaxRadiusPx);
+    const w = this.previewRT.width;
+    // The clamp is in full-resolution px, so it covers the same share of the frame at any preview scale.
+    const maxRadiusPx = (CONFIG.gatherMaxRadiusPx * w) / Math.max(this.rect.width, 1);
+    this.gather.render(renderer, scene.texture, scene.depthTexture!, this.previewRT, this.blurParams(w), maxRadiusPx);
   }
 
   /** INTERACTIVE → REFINING (or DONE without refinement) after a few frames without an optical change. */
@@ -157,7 +187,8 @@ export class Finder {
     renderer.setRenderTarget(scene);
     renderer.render(root, this.camera);
     const residualScale = residual ? CONFIG.residualBlurK / Math.sqrt(this.refineTarget) : 0;
-    this.accumulator.add(renderer, scene.texture, scene.depthTexture!, this.blurParams(), residualScale, CONFIG.residualBlurMaxPx);
+    this.accumulator.add(renderer, scene.texture, scene.depthTexture!, this.blurParams(this.rect.width), residualScale,
+      CONFIG.residualBlurMaxPx);
   }
 
   restoreCamera(): void {
@@ -173,13 +204,17 @@ export class Finder {
     if (n < CONFIG.previewUntilSamples) return;
     this.fadeStart ??= now;
     const t = Math.min((now - this.fadeStart) / CONFIG.crossfadeMs, 1);
-    // Present only when the image changed, so presents don't compete with sampling.
-    if (t !== this.mix || n !== this.presentedCount) {
+    const finished = n >= this.refineTarget;
+    // Present only when the image changed, so presents don't compete with sampling. After the crossfade,
+    // progress shows at a lower rate: each present also makes the browser composite the whole window.
+    const due = t < 1 || finished || now - this.presentedAt >= CONFIG.refinePresentIntervalMs;
+    if (due && (t !== this.mix || n !== this.presentedCount)) {
       this.mix = t;
       this.presentedCount = n;
+      this.presentedAt = now;
       this.dirty = true;
     }
-    if (t >= 1 && n >= this.refineTarget) this.mode = 'DONE';
+    if (t >= 1 && finished) this.mode = 'DONE';
   }
 
   /** Exposure and vignetting on what it shows (§10.6). */
@@ -212,14 +247,14 @@ export class Finder {
     this.lensPass.dispose();
   }
 
-  private blurParams(): BlurParams {
+  private blurParams(renderWidthPx: number): BlurParams {
     const o = this.optics!;
     return {
       focalMm: o.focalMm,
       apertureMm: o.apertureMm,
       focusM: o.focusM,
       sensorWidthMm: o.sensorWidthMm,
-      renderWidthPx: this.rect.width,
+      renderWidthPx,
       near: CONFIG.nearM,
       far: CONFIG.farM,
     };
@@ -235,6 +270,11 @@ export class Finder {
     this.aperture = apertureSamples(shape, CONFIG.apertureSampleCount);
     this.gather.setKernel(gatherKernel(shape, CONFIG.gatherKernelSize), shape.areaScale);
   }
+}
+
+/** A buffer dimension at the dynamic-resolution scale. */
+export function previewSize(px: number, scale: number): number {
+  return Math.max(1, Math.round(px * scale));
 }
 
 export function sameKey(a: unknown[], b: unknown[]): boolean {

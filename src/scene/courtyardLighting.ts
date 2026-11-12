@@ -268,14 +268,16 @@ export function createCourtyardLighting(parts: CourtyardLightingParts): TimeOfDa
   const pending = new Map<TimeOfDay, Promise<void>>();
   const progress = new Map<TimeOfDay, (loadedBytes: number, totalBytes: number) => void>();
 
+  // One generator for every sky: disposing it would release its shaders, and each new sky would compile them
+  // again on the main thread (§ compileShaders.ts: in Firefox that blocks until they're linked).
+  const pmrem = new PMREMGenerator(renderer);
+
   const prepareSky = (t: TimeOfDay, texture: DataTexture): Sky => {
     const p = PRESETS[t].sky;
     texture.mapping = EquirectangularReflectionMapping;
     if (parts.debug) logBrightestTexel(p.file, texture);
     const sunIrradiance = p.sunClamp ? clampSun(texture, p.sunClamp) : null;
-    const pmrem = new PMREMGenerator(renderer);
     const env = pmrem.fromEquirectangular(texture);
-    pmrem.dispose();
     const az = p.azimuthLeftDeg * RAD;
     const wantPhi = Math.atan2(-Math.cos(az), -Math.sin(az));
     const rotY = (p.feature.u - 0.5) * 2 * Math.PI - wantPhi;
@@ -433,6 +435,7 @@ export function createCourtyardLighting(parts: CourtyardLightingParts): TimeOfDa
     },
 
     dispose() {
+      pmrem.dispose();
       for (const s of ready.values()) {
         s.env.dispose();
         s.texture.dispose();

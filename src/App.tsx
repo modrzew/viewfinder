@@ -3,6 +3,7 @@ import { buildCourtyard } from './scene/courtyard';
 import { buildTestScene } from './scene/testScene';
 import type { TimeOfDay } from './scene/timeOfDay';
 import type { SceneSetup } from './scene/types';
+import { BenchmarkOverlay } from './ui/BenchmarkOverlay';
 import { HelpOverlay } from './ui/HelpOverlay';
 import { useShortcuts } from './ui/shortcuts';
 import { Viewport } from './ui/Viewport';
@@ -11,6 +12,7 @@ import { useStore } from './state/store';
 const params = new URLSearchParams(window.location.search);
 const DEBUG = params.get('debug') === '1';
 const SCENE = params.get('scene') === 'test' ? 'test' : 'courtyard';
+const BENCH = params.get('bench') === '1';
 
 function loadScene(
   renderer: WebGLRenderer,
@@ -51,8 +53,9 @@ export default function App() {
   if (error) return <ErrorScreen message={error} />;
   return (
     <div className="app">
-      <Viewport loadScene={loadScene} debug={DEBUG} timeOfDay={HAS_TIME_OF_DAY} />
+      <Viewport loadScene={loadScene} debug={DEBUG} timeOfDay={HAS_TIME_OF_DAY} bench={BENCH} />
       <HelpOverlay />
+      <BenchmarkOverlay />
     </div>
   );
 }

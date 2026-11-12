@@ -948,3 +948,52 @@ kbd {
     opacity: 0.15;
   }
 }
+
+/* ---------- Benchmark (?bench=1) ---------- */
+
+.bench-status {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  top: 64px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font: 600 16px/1 var(--font);
+  background: rgba(0, 0, 0, 0.7);
+  border-left: 3px solid var(--accent);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.bench {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100vw - 48px);
+  padding: 18px 22px;
+  background: rgba(14, 14, 18, 0.96);
+  border-left: 4px solid var(--accent);
+}
+
+.bench pre {
+  margin: 0 0 14px;
+  font: 13px/1.5 ui-monospace, Menlo, monospace;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.bench-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.bench-actions button {
+  padding: 6px 14px;
+  font: 600 15px/1 var(--font);
+  color: #111;
+  background: var(--accent);
+  border: 0;
+  cursor: pointer;
+}

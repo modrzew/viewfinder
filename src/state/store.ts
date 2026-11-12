@@ -39,7 +39,8 @@ export interface Runtime {
   refine: RefineProgress;
   /** Side by side: each finder's, by lens id. */
   finderRefine: Record<string, RefineProgress>;
-  loading: { loadedBytes: number; totalBytes: number } | null;
+  /** `stage` is 'shaders' once everything has downloaded and shaders are compiling. */
+  loading: { loadedBytes: number; totalBytes: number; stage?: 'shaders' } | null;
   /** EV100 of the lighting on screen (§8.5); follows the time of day once its sky has loaded. */
   ev100: number;
   /** A time of day whose sky is still downloading. */
@@ -60,7 +61,10 @@ export interface DebugInfo {
   gpuMs: number | null;
   /** Whole screen: INTERACTIVE while any view is, REFINING while any refines, DONE when all are. */
   mode: RenderMode;
+  /** Samples per refinement batch while refining, else 0. */
   samplesPerFrame: number;
+  /** Interactive render scale from dynamic resolution, 1 = full. */
+  previewScale: number;
   passes: { gather: boolean; refine: boolean; vignette: boolean; residual: boolean };
 }
 
@@ -70,8 +74,15 @@ export interface DebugInfo {
  */
 export interface Wheel { lensId: string | null; clicked: boolean }
 
+/** `?bench=1`: progress while it runs, then the report. */
+export interface BenchState {
+  status: string;
+  report: string | null;
+}
+
 interface Store {
   settings: Settings;
+  bench: BenchState | null;
   runtime: Runtime;
   debug: DebugInfo;
   helpOpen: boolean;
@@ -110,6 +121,7 @@ interface Store {
   closeWheel(commit: boolean): void;
   setRuntime(patch: Partial<Runtime>): void;
   setDebug(patch: Partial<DebugInfo>): void;
+  setBench(bench: BenchState | null): void;
   togglePass(pass: keyof DebugInfo['passes']): void;
 }
 
@@ -191,8 +203,10 @@ export const useStore = create<Store>()((set, get) => {
       gpuMs: null,
       mode: 'INTERACTIVE',
       samplesPerFrame: 0,
+      previewScale: 1,
       passes: { gather: true, refine: true, vignette: true, residual: true },
     },
+    bench: null,
     helpOpen: true,
     hudVisible: true,
     detailsOpen: false,
@@ -305,6 +319,7 @@ export const useStore = create<Store>()((set, get) => {
     },
     setRuntime: (patch) => set((st) => ({ runtime: { ...st.runtime, ...patch } })),
     setDebug: (patch) => set((st) => ({ debug: { ...st.debug, ...patch } })),
+    setBench: (bench) => set({ bench }),
     togglePass: (pass) =>
       set((st) => ({ debug: { ...st.debug, passes: { ...st.debug.passes, [pass]: !st.debug.passes[pass] } } })),
   };

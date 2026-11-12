@@ -431,11 +431,11 @@ Each view of a lens runs this on its own: the camera view, or each finder side b
   - An *exposure-only* change (Av/M) re-runs `LensPass` on what's shown and keeps the accumulation.
 - **INTERACTIVE:** render the centred camera → `GatherDofPass` → `LensPass` → screen. If nothing optical changed during the frame, keep the result as the *preview* and switch to `REFINING`.
 - **REFINING:**
-  - Render k jittered samples into `Accumulator` per frame. k adapts between 1 and 16 to keep the rAF interval ≤ ~33 ms.
+  - Render jittered samples into `Accumulator` in batches of k, each ending in a fence. Two batches stay queued, so the GPU goes straight from one to the next; k adapts between 1 and 16 so a batch is done within ~33 ms of being issued, queue wait included, which bounds how long a change waits behind refinement. When one sample alone is too slow for that, a single batch of one is queued.
   - Show the preview until n ≥ 32, then crossfade to the accumulation over ~150 ms.
   - At n = target (default 256), switch to `DONE`.
 - **DONE:** no GPU work until something changes. The UI stays live.
-- **Eye view:** a plain render, no DoF, no refinement. It's rendered only when the pose, the window size or the lighting changes, into a target that's kept, so side by side can crop it.
+- **Eye view:** a plain render, no DoF, no refinement. It's rendered only when the pose, the window size or the lighting changes, into a target that's kept, so side by side can crop it. While dynamic resolution has it scaled down (§10.2), it's rendered once more at full resolution as soon as it's still.
 - **Drawing:** the canvas's drawing buffer isn't preserved, so whenever anything on it changes, everything is drawn again from cached textures.
 - **Whole-screen mode** (debug overlay, fps "idle"): `INTERACTIVE` while any view is, `REFINING` while any refines, `DONE` when all are. The eye view alone is `DONE`.
 
@@ -444,7 +444,7 @@ Each view of a lens runs this on its own: the camera view, or each finder side b
 - **Scene targets:** RGBA16F with a `DepthTexture`. Linear, no tone mapping. The eye image has its own, kept between frames; previews and samples share a scratch one at the view's size.
 - **Accumulation:** two RGBA32F targets, ping-ponged, holding a running mean `acc_n = acc_(n−1) + (x − acc_(n−1)) / n`. Fall back to RGBA16F if 32F isn't renderable.
 - **`LensPass`:** works in linear: applies exposure × vignette. Then three's `OutputPass` applies `AgXToneMapping` and sRGB output.
-- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Optional: interactive mode may drop to 0.75× while fps < 45. Side by side, the canvas is the viewport at that resolution, and each finder's buffers are its rectangle on the canvas, snapped to whole pixels, so it's drawn 1:1.
+- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Side by side, the canvas is the viewport at that resolution, and each finder's buffers are its rectangle on the canvas, snapped to whole pixels, so it's drawn 1:1. While things move, previews and the eye image step down to 0.85×, 0.7×, 0.6× and 0.5× of that while fps < 45, and back up once frames are fast again (`DynamicResolution.ts`). Refinement, and the eye image once still, are always full resolution.
 - **Camera clip planes:** near 0.03 m, far 2000 m.
 - **Shadows:** the shadow map is rendered once after load (`renderer.shadowMap.autoUpdate = false`), since the scene is static.
 - **No SSAO or SSR.** Both fight the accumulation and cost per sample. Ambient occlusion comes from the glTF AO maps.
@@ -543,7 +543,7 @@ A scene render costs the same however small its target: the courtyard is ~59 dra
   - A finder gets a centred render of its own instead when the crop would be upscaled more than 2× (`cropMaxUpscale`), or when its frame doesn't fit inside the eye view (very wide windows).
   - Within a frame: the eye image first, then previews.
 - **Each finder** has its own preview, accumulation, mode, aperture samples and gather kernel, and resets only when its own optics change. Zooming the selected lens leaves the other finders' finished images alone, and a shared-aperture change that leaves a lens's effective f-number as it was doesn't reset that lens. The finders keep their images while camera view is up, so V back to side by side is instant if nothing changed.
-- **Refinement:** the same thin-lens accumulation, rendered into the scratch target. All refining finders share one fence-gated batch per frame and the adaptive samples-per-batch budget; the finder with the fewest samples goes next, the selected lens first on a tie, so they converge together. Finders refine to 128 samples rather than 256: a finder is about a third of the full view's width, so its bokeh discs are a third the size in pixels, and 128 samples are denser across them than 256 at full size. The residual blur follows the finder's own target.
+- **Refinement:** the same thin-lens accumulation, rendered into the scratch target. All refining finders share the fence-gated batches and the adaptive samples-per-batch budget (§10.1); the finder with the fewest samples goes next, the selected lens first on a tie, so they converge together. Finders refine to 128 samples rather than 256: a finder is about a third of the full view's width, so its bokeh discs are a third the size in pixels, and 128 samples are denser across them than 256 at full size. The residual blur follows the finder's own target.
 - **Drawing:** the eye image fills the canvas, then each finder goes through `LensPass` (with vignetting) and `OutputPass` into its rectangle. `OutputPass` clears before drawing, so each finder is drawn with the viewport and scissor set to its rectangle (GL's origin is bottom left); both are restored afterwards.
 - **Progress:** each finder's sample count is published for its progress bar; the whole screen's is the sum.
 
@@ -720,8 +720,9 @@ Each milestone ends in something you can run and check.
 5. **Refinement cost** is roughly 256 × the scene's render cost. If it's too slow, lower the sample target or the resolution in `config.ts`.
 6. **No metering.** EV100 is fixed per time of day, so pointing at the bright sky doesn't change the Av shutter speed.
 7. **Night costs more.** Night and evening add ~30 lights, so each refinement sample costs more than at golden hour. Not yet measured on the reference machine.
-8. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
-9. **Soft side-by-side previews on long lenses.** A finder's preview is a crop of the eye image, which has fewer pixels across a long lens's frame than the finder has: at 1440×900 the 50 mm crop is upscaled ~1.4×. So the preview is softer than the refined image, and point sources smaller than an eye-view pixel (the test scene's) can be missing from it until refinement brings them in. Above 2× upscale a finder renders its own preview instead.
+8. **Shader compiles in Firefox.** Firefox has no `KHR_parallel_shader_compile`, so a shader query blocks the page until the shader is linked. Shaders are compiled for the right render target, then waited on with a fence (polling a fence doesn't block in Firefox), behind the loading screen or the old image (`compileShaders.ts`). Shadow-map depth, sky background and output shaders can't be compiled ahead, so the loading screen stays up over the first frame. Safari has no GPU timer queries and Firefox has them only behind a pref (`gpuTimer.ts`); `?bench=1` measures rates and times instead.
+9. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
+10. **Soft side-by-side previews on long lenses.** A finder's preview is a crop of the eye image, which has fewer pixels across a long lens's frame than the finder has: at 1440×900 the 50 mm crop is upscaled ~1.4×. So the preview is softer than the refined image, and point sources smaller than an eye-view pixel (the test scene's) can be missing from it until refinement brings them in. Above 2× upscale a finder renders its own preview instead.
 
 ## 16. Adding cameras and lenses later
 

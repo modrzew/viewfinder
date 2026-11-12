@@ -90,6 +90,11 @@ export class Accumulator {
     return this.targets[0].texture;
   }
 
+  /** For precompiling. */
+  get materials(): ShaderMaterial[] {
+    return [this.material];
+  }
+
   setSize(w: number, h: number): void {
     for (const t of this.targets) t.setSize(w, h);
     this.material.uniforms.uTexel.value = [1 / w, 1 / h];

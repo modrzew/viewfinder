@@ -36,12 +36,17 @@ Side by side (C) floats a small viewfinder per lens in a row along the top of th
 
 Each time of day has its own sky and light level, so the Av shutter speed changes with it (ISO stays at 100). At noon the widest apertures need more than the 90D's 1/8000, so the image overexposes and the shutter speed blinks, as on the camera. An exposure locked in M carries over when you change the time of day. Golden hour loads with the scene; the other skies download the first time you pick them.
 
-The counter in the top-right corner shows how many frames per second the GPU finishes, and their average CPU and GPU time. GPU time needs timer queries, which Chrome has and Safari and Firefox don't. Rendering follows `requestAnimationFrame`, so fps can't go above the display's refresh rate; GPU time shows how much headroom is left. Once a still image has finished refining, nothing is drawn and the counter reads idle.
+The counter in the top-right corner shows how many frames per second the GPU finishes, and their average CPU and GPU time. GPU time needs timer queries: Chrome has them, Safari doesn't, and Firefox only with `webgl.enable-privileged-extensions` set to true in about:config. That pref exposes them, and a few debugging extensions, to every site, so turn it off again after measuring. Rendering follows `requestAnimationFrame`, so fps can't go above the display's refresh rate; GPU time shows how much headroom is left. Once a still image has finished refining, nothing is drawn and the counter reads idle.
+
+While you move, the previews and the eye view drop to as low as half resolution if frames fall below 45 fps, and come back up once they recover. Refined images, and the eye view once you stop, are always full resolution.
+
+Firefox has no parallel shader compilation, so a shader that isn't ready blocks the page. Shaders are built ahead: behind the loading screen, and on a time-of-day switch while the old image is still showing.
 
 URL options:
 
 - `?scene=test` loads the optics test scene: distance cards from 0.5 to 32 m with point sources, and a 1 m card at 2.24 m that exactly fills the 50 mm frame.
-- `?debug=1` adds the render mode and sample count to the fps counter, draws the predicted bokeh circle around the AF point, and lets keys 1–4 toggle the gather preview, refinement, vignetting and residual blur.
+- `?debug=1` adds the render mode, sample count and preview scale to the fps counter, draws the predicted bokeh circle around the AF point, and lets keys 1–4 toggle the gather preview, refinement, vignetting and residual blur.
+- `?bench=1` runs a benchmark once the scene has loaded, at golden hour and at night, with side by side off: fps and frame times while panning in camera and eye view, the time to refine with one and with two sample batches queued, and the longest frame during the time-of-day switch. Run it in each browser on the same machine to compare them; Copy puts the report on the clipboard. Leave the window alone while it runs (about a minute).
 
 ## Development
 
