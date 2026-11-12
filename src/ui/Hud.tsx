@@ -1,25 +1,24 @@
 import type { CSSProperties, ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import {
-  TbAperture, TbCamera, TbEye, TbEyeOff, TbFocus2, TbHelp, TbListDetails, TbMoonStars, TbStopwatch, TbSun, TbSunLow,
-  TbSunset2,
+  TbAperture, TbCamera, TbChartDonut, TbColumns2, TbEye, TbEyeOff, TbFocus2, TbHelp, TbListDetails, TbMoonStars,
+  TbStopwatch, TbSun, TbSunLow, TbSunset2,
 } from 'react-icons/tb';
 import { PiMouseScrollBold } from 'react-icons/pi';
 import { getBody } from '../optics/bodies';
 import { FOCUS_SLIDER_MAX, focusMToSlider, formatDistanceM } from '../optics/focusScale';
 import { isZoom, lensesFor } from '../optics/lenses';
 import { formatFNumber, shutterLabel, stopsWithin } from '../optics/stops';
-import type { DerivedOptics, Lens } from '../optics/types';
+import type { DerivedOptics } from '../optics/types';
+import { finderRects, finderRowBottom, hudScale } from '../render/layout';
 import { TIMES_OF_DAY, type TimeOfDay } from '../scene/timeOfDay';
-import { useOptics, useStore } from '../state/store';
+import { sideBySideOnScreen, useOptics, useStore } from '../state/store';
 import { DebugOverlay, FpsCounter } from './DebugOverlay';
-import { avOutOfRange, centreText, dofDepthText, dofText, exposureNote, fNumberHint, fovText } from './format';
+import {
+  avOutOfRange, centreText, dofDepthText, dofText, exposureNote, fNumberHint, fovText, lensFocalLabel,
+} from './format';
 
 const TIME_ICONS: Record<TimeOfDay, IconType> = { noon: TbSun, golden: TbSunLow, evening: TbSunset2, night: TbMoonStars };
-
-/** The HUD scales with the window height, like a game's with its resolution. */
-const HUD_REFERENCE_HEIGHT_PX = 900;
-const HUD_SCALE = { min: 0.8, max: 1.4 };
 
 /** Segments on the focus and zoom bars. */
 const FOCUS_SEGMENTS = 24;
@@ -155,12 +154,15 @@ function ExposureStack() {
   );
 }
 
-const slotLabel = (l: Lens) => (isZoom(l) ? `${l.focalMm.min}–${l.focalMm.max}` : `${l.focalMm.min}`);
-
-/** Bottom right, like a weapon loadout: the lens, its focal length, and the lenses L cycles through. */
+/**
+ * Bottom right, like a weapon loadout: the lens, its focal length, and the lenses L cycles through. Side by
+ * side, the slots of lenses with a finder are outlined. Space opens the lens wheel.
+ */
 function LensLoadout() {
   const o = useOptics();
-  const body = getBody(useStore((s) => s.settings.bodyId));
+  const settings = useStore((s) => s.settings);
+  const body = getBody(settings.bodyId);
+  const shown = sideBySideOnScreen(settings) ? settings.sideBySideLensIds : [];
   const lens = o.lens;
   const zoom = isZoom(lens);
   const zoomAt = Math.round(((o.focalMm - lens.focalMm.min) / (lens.focalMm.max - lens.focalMm.min)) * (ZOOM_SEGMENTS - 1));
@@ -175,26 +177,32 @@ function LensLoadout() {
       <div className="hud-lens-sub">{Math.round(o.equivalentFocalMm)} mm equiv. · {fovText(o)}</div>
       {zoom && <Segments className="hud-zoom" count={ZOOM_SEGMENTS} state={level(zoomAt)} />}
       <div className="hud-slots">
+        <kbd>Space</kbd>
+        <TbChartDonut className="hud-wheel-icon" />
         <kbd>L</kbd>
         {lensesFor(body).map((l) => (
-          <span key={l.id} className={l.id === lens.id ? 'on' : undefined}>{slotLabel(l)}<small>mm</small></span>
+          <span key={l.id} className={l.id === lens.id ? 'on' : shown.includes(l.id) ? 'shown' : undefined}>
+            {lensFocalLabel(l)}<small>mm</small>
+          </span>
         ))}
       </div>
     </div>
   );
 }
 
-function Chip({ keyLabel, icon: Icon, label, status }: {
+function Chip({ keyLabel, icon: Icon, label, status, off }: {
   keyLabel: string;
   icon: IconType;
   label: string;
   status?: string | null;
+  /** A toggle that's off: dimmed. */
+  off?: boolean;
 }) {
   return (
-    <div className="hud-chip">
+    <div className={off ? 'hud-chip off' : 'hud-chip'}>
       <kbd>{keyLabel}</kbd>
       <span className="hud-badge"><Icon /></span>
-      <Flash className="hud-chip-label" value={label} />
+      <Flash key={off ? 'off' : 'on'} className="hud-chip-label" value={label} />
       {status && <span className="hud-chip-status">{status}</span>}
     </div>
   );
@@ -207,12 +215,14 @@ function loadingText({ loadedBytes, totalBytes }: { loadedBytes: number; totalBy
 /** Top left, like the team scores: what you're looking through, and when. */
 function SceneChips({ timeOfDay }: { timeOfDay: boolean }) {
   const view = useStore((s) => s.settings.view);
+  const sideBySide = useStore((s) => sideBySideOnScreen(s.settings));
   const tod = useStore((s) => s.settings.timeOfDay);
   const todLoading = useStore((s) => s.runtime.timeOfDayLoading);
   const t = TIMES_OF_DAY.find((x) => x.id === tod)!;
   return (
     <div className="hud-chips">
       <Chip keyLabel="V" icon={view === 'camera' ? TbCamera : TbEye} label={view === 'camera' ? 'Camera' : 'Eye'} />
+      <Chip keyLabel="C" icon={TbColumns2} label="Side by side" off={!sideBySide} />
       {timeOfDay && (
         <Chip keyLabel="T" icon={TIME_ICONS[tod]} label={t.label} status={todLoading && loadingText(todLoading)} />
       )}
@@ -248,8 +258,8 @@ function AfDistance() {
   return <div className="hud-af-distance">{centreText(centre)}</div>;
 }
 
-/** Hold Tab: the full readout (§9.2). */
-function Details() {
+/** Hold Tab: the full readout (§9.2). Side by side, it opens under the finders rather than over them. */
+function Details({ top }: { top: number | null }) {
   const open = useStore((s) => s.detailsOpen);
   const centre = useStore((s) => s.runtime.centreDistanceM);
   const o = useOptics();
@@ -266,7 +276,7 @@ function Details() {
     ['AF point', centreText(centre)],
   ];
   return (
-    <div className="hud-details">
+    <div className={top === null ? 'hud-details' : 'hud-details below'} style={top === null ? undefined : { top }}>
       <h2>{o.lens.name}</h2>
       <dl>
         {rows.map(([k, v]) => (
@@ -283,20 +293,26 @@ function Details() {
 /** Everything on screen besides the image (§9.1). U hides it; the AF point and frame lines belong to the view. */
 export function Hud({ debug, timeOfDay, frameWidth }: { debug: boolean; timeOfDay: boolean; frameWidth: number }) {
   const visible = useStore((s) => s.hudVisible);
-  const view = useStore((s) => s.settings.view);
-  const height = useStore((s) => s.runtime.viewport.height);
+  const settings = useStore((s) => s.settings);
+  const viewport = useStore((s) => s.runtime.viewport);
   if (!visible) return null;
-  const scale = Math.min(Math.max(height / HUD_REFERENCE_HEIGHT_PX, HUD_SCALE.min), HUD_SCALE.max);
+  const scale = hudScale(viewport.height);
+  const sideBySide = sideBySideOnScreen(settings);
+  // Side by side, the details card goes under the finder row; it's zoomed with the HUD, hence ÷ scale.
+  const rects = sideBySide
+    ? finderRects(viewport.width, viewport.height, settings.sideBySideLensIds.length, getBody(settings.bodyId).imageAspect, scale)
+    : [];
+  const detailsTop = sideBySide ? (finderRowBottom(rects, scale) + 14 * scale) / scale : null;
   return (
     <div className="hud" style={{ '--hud-scale': scale } as CSSProperties}>
       <SceneChips timeOfDay={timeOfDay} />
       <Hints />
       {debug ? <DebugOverlay frameWidth={frameWidth} /> : <FpsCounter />}
-      {view === 'camera' && <RefineBar />}
-      {view === 'camera' && <AfDistance />}
+      {settings.view === 'camera' && <RefineBar />}
+      {(settings.view === 'camera' || sideBySide) && <AfDistance />}
       <ExposureStack />
       <LensLoadout />
-      <Details />
+      <Details top={detailsTop} />
     </div>
   );
 }

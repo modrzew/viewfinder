@@ -173,7 +173,9 @@ export async function runBenchmark(viewer: Viewer, hasTimeOfDay: boolean): Promi
     await until(viewer, () => viewer.ready && (!hasTimeOfDay || viewer.settledTimeOfDay !== null));
     saved = useStore.getState().settings;
     store.setHelpOpen(false);
-    // Same optics every run: the defaults (50 mm at f/1.8, focused at 1 m, Av).
+    // Same view and optics every run: the plain eye view (no finders side by side), and the defaults (50 mm at
+    // f/1.8, focused at 1 m, Av).
+    useStore.setState((st) => ({ settings: { ...st.settings, sideBySide: false } }));
     store.setLens('ef-50-1.8-stm');
     store.setRequestedFNumber(1.8);
     store.setFocusM(1);

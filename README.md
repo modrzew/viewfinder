@@ -16,25 +16,29 @@ See [SPEC.md](SPEC.md) for the optics model, rendering design and known limitati
 | Mouse | Look around |
 | W A S D | Walk (hold Shift to hurry) |
 | Q / E | Lower / raise eye height |
-| Wheel | Zoom, zoom lenses only (Shift ×5) |
+| Wheel | Zoom the selected lens, zoom lenses only (Shift ×5) |
 | `[` / `]` | Aperture wider / narrower by ⅓ stop |
 | `−` / `=` | Focus nearer / farther (Shift ×10) |
 | V | Camera view / eye view |
+| C | Side by side on / off |
 | X | Exposure mode Av / M |
-| L | Next lens |
+| L | Next lens (side by side: the next one shown) |
+| Space (hold) | Lens wheel: release on a lens to select it, left-click to show or hide it side by side |
 | T | Time of day: noon, golden hour, evening, night |
 | R | Back to spawn |
 | Tab (hold) | Details: field of view, hyperfocal distance and more |
 | U | Hide / show the HUD |
 | H | Help |
 
-Everything is on a game-style HUD over the view, with each setting next to the key that changes it. Bottom left are aperture, focus and exposure, each with a bar: the focus bar is the focus scale with the depth of field lit and a tick for whatever is under the centre AF point. Bottom right is the lens, with its focal length and a slot per lens. View and time of day are top left. Hold Tab for the full readout, or press U for a clean frame.
+Everything is on a game-style HUD over the view, with each setting next to the key that changes it. Bottom left are aperture, focus and exposure, each with a bar: the focus bar is the focus scale with the depth of field lit and a tick for whatever is under the centre AF point. Bottom right is the selected lens, with its focal length and a slot per lens. View, side by side and time of day are top left. Hold Tab for the full readout, or press U for a clean frame.
+
+Side by side (C) floats a small viewfinder per lens in a row along the top of the eye view, with each lens's frame lines on the eye view behind them. Each finder shows its focal length, f-number and shutter speed under it and refines on its own. All lenses share the body's settings: aperture and focus are requests that each lens clamps to its own limits, and each zoom lens keeps its own focal length. The selected lens is the one outlined in amber; L, the wheel and the bottom clusters act on it. V from side by side shows the selected lens full size, and V again comes back. Hold Space for the lens wheel to pick a lens, or click lenses on the wheel to add them to the row or take them out.
 
 Each time of day has its own sky and light level, so the Av shutter speed changes with it (ISO stays at 100). At noon the widest apertures need more than the 90D's 1/8000, so the image overexposes and the shutter speed blinks, as on the camera. An exposure locked in M carries over when you change the time of day. Golden hour loads with the scene; the other skies download the first time you pick them.
 
 The counter in the top-right corner shows how many frames per second the GPU finishes, and their average CPU and GPU time. GPU time needs timer queries: Chrome has them, Safari doesn't, and Firefox only with `webgl.enable-privileged-extensions` set to true in about:config. That pref exposes them, and a few debugging extensions, to every site, so turn it off again after measuring. Rendering follows `requestAnimationFrame`, so fps can't go above the display's refresh rate; GPU time shows how much headroom is left. Once a still image has finished refining, nothing is drawn and the counter reads idle.
 
-While you move, the preview drops to as low as half resolution if frames fall below 45 fps, and comes back up once they recover. The finished still image is always full resolution.
+While you move, the previews and the eye view drop to as low as half resolution if frames fall below 45 fps, and come back up once they recover. Refined images, and the eye view once you stop, are always full resolution.
 
 Firefox has no parallel shader compilation, so a shader that isn't ready blocks the page. Shaders are built ahead: behind the loading screen, and on a time-of-day switch while the old image is still showing.
 
@@ -42,7 +46,7 @@ URL options:
 
 - `?scene=test` loads the optics test scene: distance cards from 0.5 to 32 m with point sources, and a 1 m card at 2.24 m that exactly fills the 50 mm frame.
 - `?debug=1` adds the render mode, sample count and preview scale to the fps counter, draws the predicted bokeh circle around the AF point, and lets keys 1–4 toggle the gather preview, refinement, vignetting and residual blur.
-- `?bench=1` runs a benchmark once the scene has loaded, at golden hour and at night: fps and frame times while panning in camera and eye view, the time to refine, and the longest frame during the time-of-day switch. Run it in each browser on the same machine to compare them; Copy puts the report on the clipboard. Leave the window alone while it runs (about a minute).
+- `?bench=1` runs a benchmark once the scene has loaded, at golden hour and at night, with side by side off: fps and frame times while panning in camera and eye view, the time to refine with one and with two sample batches queued, and the longest frame during the time-of-day switch. Run it in each browser on the same machine to compare them; Copy puts the report on the clipboard. Leave the window alone while it runs (about a minute).
 
 ## Development
 

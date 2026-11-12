@@ -16,12 +16,18 @@ export function useShortcuts(debug: boolean, timeOfDay: boolean): void {
         case 'Minus': case 'NumpadSubtract': s.stepFocus(-big); break;
         case 'Equal': case 'NumpadAdd': s.stepFocus(big); break;
         case 'KeyV': if (!e.repeat) s.toggleView(); break;
+        case 'KeyC': if (!e.repeat) s.toggleSideBySide(); break;
         case 'KeyX': if (!e.repeat) s.toggleExposureMode(); break;
         case 'KeyL': if (!e.repeat) s.nextLens(); break;
         case 'KeyT': if (timeOfDay && !e.repeat) s.nextTimeOfDay(); else handled = false; break;
         case 'KeyH': if (!e.repeat) s.setHelpOpen(!s.helpOpen); break;
         case 'KeyU': if (!e.repeat) s.setHudVisible(!s.hudVisible); break;
         case 'Tab': s.setDetailsOpen(true); break;
+        // The lens wheel, open while Space is held (§9.2).
+        case 'Space':
+          if (s.helpOpen) handled = false;
+          else if (!e.repeat && !s.runtime.loading) s.openWheel();
+          break;
         case 'Escape': s.setHelpOpen(false); handled = false; break;
         case 'Digit1': if (debug) s.togglePass('gather'); break;
         case 'Digit2': if (debug) s.togglePass('refine'); break;
@@ -31,11 +37,15 @@ export function useShortcuts(debug: boolean, timeOfDay: boolean): void {
       }
       if (handled) e.preventDefault();
     };
-    // Details show only while Tab is held.
+    // Details show only while Tab is held; releasing Space picks the lens under the wheel's aim.
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Tab') useStore.getState().setDetailsOpen(false);
+      if (e.code === 'Space') useStore.getState().closeWheel(true);
     };
-    const onBlur = () => useStore.getState().setDetailsOpen(false);
+    const onBlur = () => {
+      useStore.getState().setDetailsOpen(false);
+      useStore.getState().closeWheel(false);
+    };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);

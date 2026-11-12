@@ -19,7 +19,7 @@ These were agreed with the product owner. Don't reopen them during the build.
 |---|---|
 | Scene | A built 3D scene (Three.js + CC0 Poly Haven assets), not a scanned/splat capture. One scene: a garden café courtyard at golden hour with string lights. |
 | Movement | FPS style: mouse look (pointer lock) + WASD walking. |
-| View | One view. **Camera view** = the viewfinder (3:2 frame, lens FOV, live DoF). **Eye view** toggle = a wide human view with the current lens's frame lines drawn on top. No side-by-side. |
+| View | **Camera view** = the viewfinder (3:2 frame, lens FOV, live DoF). **Eye view** toggle = a wide human view with the current lens's frame lines drawn on top. **Side by side** (added after the MVP, at the owner's request) = the eye view with a small floating viewfinder per lens. |
 | Render model | Progressive. A fast approximate DoF is shown while anything changes; it refines to physically correct DoF within ~1–2 s once still. |
 | Focus | Manual only, with a slider (plus keyboard). No autofocus. A centre-distance readout helps you set it. |
 | Zoom | A slider for zoom lenses, hidden for primes. The mouse wheel also moves it. |
@@ -41,7 +41,6 @@ These were agreed with the product owner. Don't reopen them during the build.
 - image stabilisation, motion blur, ISO noise
 - saving photos
 - more than one scene
-- side-by-side comparison
 - URL or saved state
 
 ## 4. Target hardware and browsers
@@ -87,9 +86,12 @@ Rules:
                   ▼
    Viewer (render loop) ── FpsController (input, collisions)
      ├─ scene: courtyard | test
-     ├─ GatherDofPass  (interactive preview)
-     ├─ Accumulator    (refined: jittered thin-lens renders)
-     ├─ LensPass       (exposure, vignetting) → OutputPass (AgX tone map, sRGB)
+     ├─ eye image      (kept render target) → LensPass → OutputPass
+     ├─ CropPass       (side by side: a lens's crop of the eye image)
+     ├─ Finder × n     (one per view of a lens: camera view, or each finder side by side)
+     │    ├─ GatherDofPass  (interactive preview)
+     │    ├─ Accumulator    (refined: jittered thin-lens renders)
+     │    └─ LensPass       (exposure, vignetting) → OutputPass (AgX tone map, sRGB)
      └─ Rangefinder    (centre distance → store.runtime)
 ```
 
@@ -115,13 +117,14 @@ src/
     *.test.ts
   state/store.ts
   render/
-    Viewer.ts  FpsController.ts  Rangefinder.ts  jitteredProjection.ts
-    passes/GatherDofPass.ts  passes/Accumulator.ts  passes/LensPass.ts
+    Viewer.ts  Finder.ts  FpsController.ts  Rangefinder.ts  jitteredProjection.ts
+    layout.ts                           # frame, finder and HUD-scale layout, shared with the UI
+    passes/GatherDofPass.ts  passes/Accumulator.ts  passes/LensPass.ts  passes/CropPass.ts
     shaders/                            # GLSL; blur formula mirrors optics.ts
   scene/
     courtyard.ts  layout.ts  stringLights.ts  testScene.ts  loadAssets.ts
   ui/
-    Viewport.tsx  Hud.tsx  FrameLines.tsx
+    Viewport.tsx  Hud.tsx  FrameLines.tsx  Finders.tsx  LensWheel.tsx  wheel.ts
     LoadingScreen.tsx  HelpOverlay.tsx  DebugOverlay.tsx  styles.css
 ```
 
@@ -277,7 +280,7 @@ Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the
 - Implement the inverse too, for setting the slider from a distance.
 - Keys `−` / `=` move ±1 position (Shift: ±10).
 - Display: two decimals below 10 m, one decimal below 100 m, integers above that, and `∞`.
-- When switching lens, keep focus in metres, clamp it to the new lens's closest focus, and recompute the slider position.
+- Focus is stored as a requested distance shared by all lenses; each lens clamps it to its own closest focus, like the f-number (§8.2). A lens switch doesn't change the request. Keys step on the selected lens's scale from where it actually focuses, and stepping nearer at its closest focus does nothing, so a closer request made with another lens survives.
 
 ### 8.7 Test vectors (`optics.test.ts`; c = 0.019, W = 22.3, 3:2)
 
@@ -309,6 +312,11 @@ Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the
   - Covers the full viewport, horizontal FOV 90°, aspect taken from the window.
   - Draws a frame-lines rectangle for the current lens, labelled (e.g. `50 mm`). Its half-width fraction is `tan(hfov_lens/2) / tan(hfov_eye/2)`; the half-height fraction is the same with vfov.
   - No DoF and no vignette; same exposure and tone mapping as the camera view.
+- **Side by side** (on screen when the view is eye and `sideBySide` is set):
+  - The eye view as above fills the viewport. Over it floats one 3:2 viewfinder per shown lens (up to 4), all the same size, in one row docked at the top centre in loadout order. The centre stays clear for aiming.
+  - Layout (`finderRects` in `render/layout.ts`, constants in `config.ts`): the row, captions included, stays within the top 38% of the viewport. It either starts at the HUD's top margin, between the top-left chips and top-right hints (250 px × HUD scale kept for each), or below them (150 px × HUD scale down) across the full width; the wider finder wins. Each finder is at most 36% of the viewport width, 10 px × HUD scale apart. At 1440×900 two finders are 438×292. The layout doesn't depend on whether the HUD is hidden.
+  - Each finder has a thin border with a drop shadow (amber for the selected lens), a small AF point at its centre, a progress bar along its bottom while it refines, and a caption under it: focal length (the zoom range dimmed), f-number and shutter speed, the shutter red when Av is out of range. This chrome belongs to the view, so U doesn't hide it.
+  - The eye view behind shows frame lines for every shown lens, labelled at their bottom edge, the selected one in amber. They pass behind the finders. The AF point and AF distance are at the screen centre, as in camera view.
 - **Overlays:**
   - Loading screen showing MB loaded / total.
   - Help overlay (H) listing the controls, shown automatically on first load.
@@ -325,13 +333,13 @@ Small clusters in the corners, styled after shooter HUDs: no panels behind them,
 | Focus | `−` `=` | The distance; the depth of field (`1.95 – 2.05 m`). | The focus scale (§8.6): the depth of field lit, the focus distance marked, and a tick under what's at the AF point. |
 | Exposure | X | `Av` or `M`, the shutter speed, and `ISO 100`. In M, or in Av at a shutter limit, the EV offset too (`ISO 100 · −1⅓ EV`). In Av at a limit the shutter speed blinks and the note turns into a red tag. | Exposure level, ±3 EV in thirds, lit from the middle out to the offset. |
 
-**Bottom right: the lens, like a weapon loadout.** The lens name, the focal length in large type with `56 mm equiv. · 35.3° × 24.0°` under it, a zoom bar and the wheel prompt (zoom lenses only), and a slot per lens that mounts, the current one filled, after the L prompt.
+**Bottom right: the lens, like a weapon loadout.** The selected lens's name, the focal length in large type with `56 mm equiv. · 35.3° × 24.0°` under it, a zoom bar and the mouse wheel prompt (zoom lenses only), and a slot per lens that mounts, the selected one filled, after the Space (lens wheel) and L prompts. Side by side, the slots of lenses with a finder are outlined.
 
-**Top left:** chips for View (V: camera or eye) and Time of day (T, courtyard only, with sky download progress), each a key, an icon badge and the current value.
+**Top left:** chips for View (V: camera or eye), Side by side (C: lit when on screen, dimmed otherwise) and Time of day (T, courtyard only, with sky download progress), each a key, an icon badge and the current value.
 
 **Top right:** prompts for Tab (details), U (hide HUD) and H (help), with the fps counter, or the debug overlay with `?debug=1` (§10.8), under them.
 
-**Hold Tab** for the full readout in a card:
+**Hold Tab** for the full readout of the selected lens in a card (side by side, it opens under the finder row):
 - Focal length with equivalent: `35 mm (56 mm equiv.)`.
 - FOV: `H 35.3° · V 24.0° · D 41.9°`.
 - f-number, with the clamp hint.
@@ -343,20 +351,30 @@ Small clusters in the corners, styled after shooter HUDs: no panels behind them,
 
 A changed setting briefly turns amber, so a key press shows what it did.
 
+**Hold Space for the lens wheel**, a radial menu like a shooter's weapon wheel:
+- One equal slice per lens that mounts, the first at the top, clockwise. Each shows the lens's short label (`50 mm`, `18–55 mm`) and widest aperture (`f/1.8`, `f/4–5.6`). The selected lens has an amber arc; lenses with a finder have a side-by-side mark, dimmed while side by side isn't on screen.
+- While it's open, mouse movement steers it instead of looking around: movement since it opened is the aim, clamped to 120 px, with a 30 px dead zone. It works with or without pointer lock, and hides the cursor. Walking keys keep working, and the scene keeps rendering behind a light scrim.
+- The slice under the aim is filled white. The hub names it and says what each input does: Space (release) → Select (Close after a click), and left click → Show side by side, Add to side by side or Remove from side by side (dimmed when it can't).
+- Releasing Space on a slice selects that lens, like L. With side by side on screen, the lens also gets a finder if it has none; at 4 finders it takes the place of the previous selection. Releasing in the dead zone does nothing.
+- A left click toggles that lens's finder and the wheel stays open. After a click, releasing Space only closes the wheel, so a finder just removed doesn't come straight back. If side by side isn't on screen, it comes on (as C) with this lens shown. The last finder can't be removed and nothing is added past 4; if the selected lens loses its finder, the first shown lens is selected. The click doesn't capture the mouse.
+- It closes without doing anything when the window loses focus or pointer lock is lost. It doesn't open while the help overlay is up or the scene is loading. U doesn't hide it.
+
 ### 9.3 Input
 
 | Input | Action |
 |---|---|
-| Click viewport | Capture the mouse (pointer lock). Esc releases it. |
+| Click viewport | Capture the mouse (pointer lock). Esc releases it. While the lens wheel is open, a click toggles a finder instead. |
 | Mouse | Look. Sensitivity scales with `tan(vfov/2)` so aiming at 55 mm is as controllable as at 18 mm. Pitch is clamped to ±85°. |
 | W A S D | Walk at 1.4 m/s (Shift ×2.5), with ~0.1 s smoothing. |
 | Q / E | Lower / raise eye height (0.3–1.9 m, default 1.2). |
-| Wheel | Zoom ±1 mm per notch (Shift ±5). Zoom lenses only. |
+| Wheel | Zoom the selected lens ±1 mm per notch (Shift ±5). Zoom lenses only. |
 | `[` / `]` | Aperture wider / narrower by ⅓ stop. |
 | `−` / `=` | Focus nearer / farther (Shift ×10). |
-| V | Camera / Eye view. |
+| V | Camera / Eye view. `sideBySide` survives, so from side by side V shows the selected lens full size, and V again comes back. |
+| C | Side by side. Off if it's on screen (leaving the eye view); otherwise on, switching to the eye view. |
 | X | Av / M. |
-| L | Next lens. |
+| L | Next lens. Side by side, the next of the shown lenses. |
+| Space (hold) | Lens wheel (§9.2). |
 | T | Next time of day (courtyard only). |
 | R | Back to spawn. |
 | Tab (hold) | Details: the full readout. |
@@ -370,29 +388,34 @@ Shortcuts work with or without pointer lock. Ignore them while a form control ha
 ```ts
 interface Settings {
   bodyId: string;
-  lensId: string;
-  focalMm: number;
-  requestedFNumber: number;
-  focusM: number;                                   // Infinity allowed
+  lensId: string;                                   // the selected lens
+  focalMmByLens: Record<string, number>;            // each lens's zoom ring
+  requestedFNumber: number;                         // shared; each lens clamps it
+  focusM: number;                                   // shared request; Infinity allowed
   exposureMode: 'Av' | 'M';
   manualLock: { fNumber: number; shutterS: number } | null;
   view: 'camera' | 'eye';
+  sideBySide: boolean;
+  sideBySideLensIds: string[];                      // lenses with a finder
   timeOfDay: 'noon' | 'golden' | 'evening' | 'night';
 }
 interface Runtime {
   centreDistanceM: number | null;                   // null = sky
-  refine: { samples: number; target: number };
+  refine: { samples: number; target: number };      // whole screen
+  finderRefine: Record<string, { samples: number; target: number }>;  // side by side, by lens
   loading: { loadedBytes: number; totalBytes: number } | null;
   ev100: number;                                    // of the lighting on screen
   timeOfDayLoading: { timeOfDay; loadedBytes; totalBytes } | null;
 }
 ```
 
-- **Defaults:** EOS 90D, 50mm, f/1.8, focus 1.0 m, Av, camera view, golden hour.
+- **One body's settings, shared by every lens:** requested f-number, focus, exposure mode and lock, time of day and the pose. Each lens clamps them to its own limits when its optics are derived, so at f/1.8 requested the 50 mm shows f/1.8 and the 18-55 its widest.
+- **The selected lens** (`lensId`) is the one the HUD describes and the wheel zooms, and the one mounted in camera view.
+- **Side by side is on screen exactly when `view === 'eye' && sideBySide`.** `sideBySideLensIds` is in loadout order, never empty and at most 4 long. Whenever side by side is on screen the selected lens is among them; if it isn't when side by side comes on screen, it's added, replacing the last one at the cap.
+- **Defaults:** EOS 90D, 50mm selected, each zoom lens at its widest, f/1.8, focus 1.0 m, Av, camera view, side by side off with every lens that mounts (up to 4) listed, golden hour.
 - **Lens switch:**
-  - Clamp the focal length to the new range.
-  - Keep focus, clamped to the new lens's closest focus.
-  - Keep the requested f-number; the effective value clamps.
+  - Each lens keeps its own focal length.
+  - Keep the requested focus and f-number; the effective values clamp.
   - Keep `manualLock`.
 
 ## 10. Rendering
@@ -401,23 +424,27 @@ interface Runtime {
 
 There are three modes: `INTERACTIVE → REFINING → DONE`.
 
+Each view of a lens runs this on its own: the camera view, or each finder side by side (§10.9). The `Finder` class holds that state; the Viewer schedules the work and draws the canvas.
+
 - **Changes that reset:**
-  - An *optical* change (pose, lens, focal length, aperture, focus, window size, view) switches to `INTERACTIVE` and resets the accumulation.
-  - An *exposure-only* change (Av/M) re-runs `LensPass` on the current buffer and keeps the accumulation.
+  - An *optical* change (pose, lens, focal length, effective f-number, clamped focus, buffer size) switches that view to `INTERACTIVE` and resets its accumulation.
+  - An *exposure-only* change (Av/M) re-runs `LensPass` on what's shown and keeps the accumulation.
 - **INTERACTIVE:** render the centred camera → `GatherDofPass` → `LensPass` → screen. If nothing optical changed during the frame, keep the result as the *preview* and switch to `REFINING`.
 - **REFINING:**
   - Render jittered samples into `Accumulator` in batches of k, each ending in a fence. Two batches stay queued, so the GPU goes straight from one to the next; k adapts between 1 and 16 so a batch is done within ~33 ms of being issued, queue wait included, which bounds how long a change waits behind refinement. When one sample alone is too slow for that, a single batch of one is queued.
   - Show the preview until n ≥ 32, then crossfade to the accumulation over ~150 ms.
   - At n = target (default 256), switch to `DONE`.
 - **DONE:** no GPU work until something changes. The UI stays live.
-- **Eye view:** one plain render per frame, no DoF, no refinement.
+- **Eye view:** a plain render, no DoF, no refinement. It's rendered only when the pose, the window size or the lighting changes, into a target that's kept, so side by side can crop it. While dynamic resolution has it scaled down (§10.2), it's rendered once more at full resolution as soon as it's still.
+- **Drawing:** the canvas's drawing buffer isn't preserved, so whenever anything on it changes, everything is drawn again from cached textures.
+- **Whole-screen mode** (debug overlay, fps "idle"): `INTERACTIVE` while any view is, `REFINING` while any refines, `DONE` when all are. The eye view alone is `DONE`.
 
 ### 10.2 Targets and colour
 
-- **Scene target:** RGBA16F with a `DepthTexture`. Linear, no tone mapping.
+- **Scene targets:** RGBA16F with a `DepthTexture`. Linear, no tone mapping. The eye image has its own, kept between frames; previews and samples share a scratch one at the view's size.
 - **Accumulation:** two RGBA32F targets, ping-ponged, holding a running mean `acc_n = acc_(n−1) + (x − acc_(n−1)) / n`. Fall back to RGBA16F if 32F isn't renderable.
 - **`LensPass`:** works in linear: applies exposure × vignette. Then three's `OutputPass` applies `AgXToneMapping` and sRGB output.
-- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Interactive mode and the eye view step down to 0.85×, 0.7×, 0.6× and 0.5× while fps < 45, and back up once frames are fast again (`DynamicResolution.ts`). Refinement always renders at full resolution.
+- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Side by side, the canvas is the viewport at that resolution, and each finder's buffers are its rectangle on the canvas, snapped to whole pixels, so it's drawn 1:1. While things move, previews and the eye image step down to 0.85×, 0.7×, 0.6× and 0.5× of that while fps < 45, and back up once frames are fast again (`DynamicResolution.ts`). Refinement, and the eye image once still, are always full resolution.
 - **Camera clip planes:** near 0.03 m, far 2000 m.
 - **Shadows:** the shadow map is rendered once after load (`renderer.shadowMap.autoUpdate = false`), since the scene is static.
 - **No SSAO or SSR.** Both fight the accumulation and cost per sample. Ambient occlusion comes from the glTF AO maps.
@@ -506,6 +533,19 @@ r          = mix(roundness.wideOpen, roundness.stoppedDown, clamp(Δ / roundness
 - Shows fps, mode, sample count and samples per frame.
 - Draws the predicted bokeh circle `b_px(centre distance)` around the reticle, so the render can be compared with the maths by eye.
 - Has keys to toggle individual passes.
+
+### 10.9 Side by side
+
+A scene render costs the same however small its target: the courtyard is ~59 draw calls and 1.9 M triangles, merged per material, so nothing is culled. Side by side is built so that extra finders don't add scene renders while things move.
+
+- **Previews crop the eye image.** A lens's pinhole view is the centred crop of the eye view from the same pose, with half extents `tan(hfov_lens/2) / tan(hfov_eye/2)` and the same with vfov (the frame-line fractions, §9.1), and both share near and far planes, so depth means the same in both. `CropPass` copies that crop of the eye image's colour (bilinear, through the overflow guard) and depth (nearest, written as depth) into the scratch target at the finder's size, and `GatherDofPass` runs on it with that finder's blur (`renderWidthPx` = the finder's width).
+  - Moving costs one scene render plus a few small full-screen passes per finder. Changing aperture, focus or zoom while still costs no scene render, and only finders whose optics changed redo their preview.
+  - A finder gets a centred render of its own instead when the crop would be upscaled more than 2× (`cropMaxUpscale`), or when its frame doesn't fit inside the eye view (very wide windows).
+  - Within a frame: the eye image first, then previews.
+- **Each finder** has its own preview, accumulation, mode, aperture samples and gather kernel, and resets only when its own optics change. Zooming the selected lens leaves the other finders' finished images alone, and a shared-aperture change that leaves a lens's effective f-number as it was doesn't reset that lens. The finders keep their images while camera view is up, so V back to side by side is instant if nothing changed.
+- **Refinement:** the same thin-lens accumulation, rendered into the scratch target. All refining finders share the fence-gated batches and the adaptive samples-per-batch budget (§10.1); the finder with the fewest samples goes next, the selected lens first on a tie, so they converge together. Finders refine to 128 samples rather than 256: a finder is about a third of the full view's width, so its bokeh discs are a third the size in pixels, and 128 samples are denser across them than 256 at full size. The residual blur follows the finder's own target.
+- **Drawing:** the eye image fills the canvas, then each finder goes through `LensPass` (with vignetting) and `OutputPass` into its rectangle. `OutputPass` clears before drawing, so each finder is drawn with the viewport and scissor set to its rectangle (GL's origin is bottom left); both are restored afterwards.
+- **Progress:** each finder's sample count is published for its progress bar; the whole screen's is the sum.
 
 ## 11. Scene: café courtyard
 
@@ -680,8 +720,9 @@ Each milestone ends in something you can run and check.
 5. **Refinement cost** is roughly 256 × the scene's render cost. If it's too slow, lower the sample target or the resolution in `config.ts`.
 6. **No metering.** EV100 is fixed per time of day, so pointing at the bright sky doesn't change the Av shutter speed.
 7. **Night costs more.** Night and evening add ~30 lights, so each refinement sample costs more than at golden hour. Not yet measured on the reference machine.
-8. **Shader compiles in Firefox.** Firefox has no `KHR_parallel_shader_compile`, so a shader query blocks the page until the shader is linked. Shaders are compiled for the right render target, then waited on with a fence (polling a fence doesn't block in Firefox), behind the loading screen or the old image (`compileShaders.ts`). Shadow-map depth, sky background and output shaders can't be compiled ahead, so the loading screen stays up over the first frame. Firefox and Safari have no GPU timer queries either; `?bench=1` measures rates and times instead.
+8. **Shader compiles in Firefox.** Firefox has no `KHR_parallel_shader_compile`, so a shader query blocks the page until the shader is linked. Shaders are compiled for the right render target, then waited on with a fence (polling a fence doesn't block in Firefox), behind the loading screen or the old image (`compileShaders.ts`). Shadow-map depth, sky background and output shaders can't be compiled ahead, so the loading screen stays up over the first frame. Safari has no GPU timer queries and Firefox has them only behind a pref (`gpuTimer.ts`); `?bench=1` measures rates and times instead.
 9. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
+10. **Soft side-by-side previews on long lenses.** A finder's preview is a crop of the eye image, which has fewer pixels across a long lens's frame than the finder has: at 1440×900 the 50 mm crop is upscaled ~1.4×. So the preview is softer than the refined image, and point sources smaller than an eye-view pixel (the test scene's) can be missing from it until refinement brings them in. Above 2× upscale a finder renders its own preview instead.
 
 ## 16. Adding cameras and lenses later
 

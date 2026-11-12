@@ -1,6 +1,19 @@
 import { formatDistanceM } from '../optics/focusScale';
+import { isZoom } from '../optics/lenses';
 import { formatEvThirds } from '../optics/stops';
-import type { DerivedOptics } from '../optics/types';
+import type { DerivedOptics, Lens } from '../optics/types';
+
+/** A lens's focal length as on its slot, without the unit: `50`, `18–55`. */
+export function lensFocalLabel(l: Lens): string {
+  return isZoom(l) ? `${l.focalMm.min}–${l.focalMm.max}` : `${l.focalMm.min}`;
+}
+
+/** Its widest aperture across the zoom range: `f/1.8`, `f/4–5.6`. */
+export function lensApertureLabel(l: Lens): string {
+  const first = l.maxAperture[0].fNumber;
+  const last = l.maxAperture[l.maxAperture.length - 1].fNumber;
+  return first === last ? `f/${first}` : `f/${first}–${last}`;
+}
 
 export function fovText(o: DerivedOptics): string {
   return `${o.hfovDeg.toFixed(1)}° × ${o.vfovDeg.toFixed(1)}°`;
