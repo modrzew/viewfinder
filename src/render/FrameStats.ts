@@ -1,11 +1,7 @@
 import type { WebGLRenderer } from 'three';
 import { useStore } from '../state/store';
-
-/** The parts of EXT_disjoint_timer_query_webgl2 used here. */
-interface TimerQueryExt {
-  TIME_ELAPSED_EXT: number;
-  GPU_DISJOINT_EXT: number;
-}
+import { syncSignaled } from './compileShaders';
+import { createGpuTimer, type GpuTimer } from './gpuTimer';
 
 const WINDOW_MS = 500;
 /** Fences in flight at most; while full, new frames wait for the next fence. */
@@ -18,12 +14,12 @@ const MAX_FENCES = 64;
  * fps counts frames the GPU has finished, not frames sent to it: a browser may keep calling rAF while the
  * GPU falls behind, so the rate of sending can be far higher than what the GPU delivers. rAF never runs
  * faster than the display refreshes, so fps tops out there; GPU time shows the headroom beyond it. It needs
- * EXT_disjoint_timer_query_webgl2, which Chrome has and Safari and Firefox don't.
+ * GPU timer queries: Chrome has them, Firefox only behind a pref, Safari not at all (gpuTimer.ts).
  */
 export class FrameStats {
   private readonly renderer: WebGLRenderer;
   private readonly gl: WebGL2RenderingContext;
-  private readonly ext: TimerQueryExt | null;
+  private readonly timer: GpuTimer | null;
   /** Fences after drawn frames, oldest first, with how many frames each one completes. */
   private readonly fences: { sync: WebGLSync; frames: number }[] = [];
   /** Drawn frames not yet behind a fence. */
@@ -34,6 +30,10 @@ export class FrameStats {
   private query: WebGLQuery | null = null;
   private renderCount = 0;
   private start = 0;
+  /** Main-thread time of the last frame that drew, ms. */
+  lastCpuMs = 0;
+  /** Running totals since start, for the benchmark. */
+  readonly totals = { finished: 0, drawn: 0, cpuMs: 0, gpuMs: 0, gpuFrames: 0 };
 
   private windowStart = 0;
   private finished = 0;
@@ -45,7 +45,7 @@ export class FrameStats {
   constructor(renderer: WebGLRenderer) {
     this.renderer = renderer;
     this.gl = renderer.getContext() as WebGL2RenderingContext;
-    this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExt | null;
+    this.timer = createGpuTimer(this.gl);
   }
 
   begin(): void {
@@ -53,9 +53,9 @@ export class FrameStats {
     this.collectGpu();
     this.renderCount = this.renderer.info.render.frame;
     this.start = performance.now();
-    if (this.ext) {
-      this.query = this.free.pop() ?? this.gl.createQuery();
-      this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, this.query);
+    if (this.timer) {
+      this.query = this.free.pop() ?? this.timer.create();
+      this.timer.begin(this.query);
     }
   }
 
@@ -66,10 +66,13 @@ export class FrameStats {
     if (drew) {
       this.drawn++;
       this.unfenced++;
-      this.cpuMs += performance.now() - this.start;
+      this.lastCpuMs = performance.now() - this.start;
+      this.cpuMs += this.lastCpuMs;
+      this.totals.drawn++;
+      this.totals.cpuMs += this.lastCpuMs;
     }
     if (this.query) {
-      gl.endQuery(this.ext!.TIME_ELAPSED_EXT);
+      this.timer!.end();
       this.pending.push({ query: this.query, drew });
       this.query = null;
     }
@@ -94,34 +97,37 @@ export class FrameStats {
 
   dispose(): void {
     for (const f of this.fences) this.gl.deleteSync(f.sync);
-    for (const q of [...this.free, ...this.pending.map((p) => p.query)]) this.gl.deleteQuery(q);
+    for (const q of [...this.free, ...this.pending.map((p) => p.query)]) this.timer?.delete(q);
     this.fences.length = this.free.length = this.pending.length = 0;
   }
 
   private collectFences(): void {
     const gl = this.gl;
-    while (this.fences.length && gl.getSyncParameter(this.fences[0].sync, gl.SYNC_STATUS) === gl.SIGNALED) {
+    while (this.fences.length && syncSignaled(gl, this.fences[0].sync)) {
       const f = this.fences.shift()!;
       gl.deleteSync(f.sync);
       this.finished += f.frames;
+      this.totals.finished += f.frames;
     }
   }
 
   /** Reads finished timer queries; results arrive a few frames late. */
   private collectGpu(): void {
-    if (!this.ext) return;
-    const gl = this.gl;
-    // A disjoint event (e.g. a GPU clock change) makes every result in flight meaningless.
-    if (gl.getParameter(this.ext.GPU_DISJOINT_EXT)) {
+    const timer = this.timer;
+    if (!timer) return;
+    if (timer.disjoint()) {
       for (const p of this.pending) this.free.push(p.query);
       this.pending.length = 0;
       return;
     }
-    while (this.pending.length && gl.getQueryParameter(this.pending[0].query, gl.QUERY_RESULT_AVAILABLE)) {
+    while (this.pending.length && timer.available(this.pending[0].query)) {
       const { query, drew } = this.pending.shift()!;
       if (drew) {
-        this.gpuMs += gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;
+        const ms = timer.result(query) / 1e6;
+        this.gpuMs += ms;
         this.gpuFrames++;
+        this.totals.gpuMs += ms;
+        this.totals.gpuFrames++;
       }
       this.free.push(query);
     }

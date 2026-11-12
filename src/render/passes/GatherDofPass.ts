@@ -192,6 +192,11 @@ export class GatherDofPass {
   private readonly compositeMat = material(COMPOSITE_FRAG, { ...blurUniforms(), tColor: { value: null }, tDepth: { value: null }, tBlur: { value: null }, uMaxRadius: { value: 48 } });
   private readonly quad = new FullScreenQuad();
 
+  /** For precompiling. */
+  get materials(): ShaderMaterial[] {
+    return [this.cocMat, this.tileMat, this.dilateMat, this.gatherMat, this.fillMat, this.compositeMat];
+  }
+
   setSize(w: number, h: number): void {
     const hw = Math.ceil(w / 2);
     const hh = Math.ceil(h / 2);

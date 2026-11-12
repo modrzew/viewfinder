@@ -406,7 +406,7 @@ There are three modes: `INTERACTIVE → REFINING → DONE`.
   - An *exposure-only* change (Av/M) re-runs `LensPass` on the current buffer and keeps the accumulation.
 - **INTERACTIVE:** render the centred camera → `GatherDofPass` → `LensPass` → screen. If nothing optical changed during the frame, keep the result as the *preview* and switch to `REFINING`.
 - **REFINING:**
-  - Render k jittered samples into `Accumulator` per frame. k adapts between 1 and 16 to keep the rAF interval ≤ ~33 ms.
+  - Render jittered samples into `Accumulator` in batches of k, each ending in a fence. Two batches stay queued, so the GPU goes straight from one to the next; k adapts between 1 and 16 so a batch is done within ~33 ms of being issued, queue wait included, which bounds how long a change waits behind refinement. When one sample alone is too slow for that, a single batch of one is queued.
   - Show the preview until n ≥ 32, then crossfade to the accumulation over ~150 ms.
   - At n = target (default 256), switch to `DONE`.
 - **DONE:** no GPU work until something changes. The UI stays live.
@@ -417,7 +417,7 @@ There are three modes: `INTERACTIVE → REFINING → DONE`.
 - **Scene target:** RGBA16F with a `DepthTexture`. Linear, no tone mapping.
 - **Accumulation:** two RGBA32F targets, ping-ponged, holding a running mean `acc_n = acc_(n−1) + (x − acc_(n−1)) / n`. Fall back to RGBA16F if 32F isn't renderable.
 - **`LensPass`:** works in linear: applies exposure × vignette. Then three's `OutputPass` applies `AgXToneMapping` and sRGB output.
-- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Optional: interactive mode may drop to 0.75× while fps < 45.
+- **Internal resolution:** viewfinder CSS px × min(devicePixelRatio, 1.5), capped at 2560 px wide (`config.ts`). Interactive mode and the eye view step down to 0.85×, 0.7×, 0.6× and 0.5× while fps < 45, and back up once frames are fast again (`DynamicResolution.ts`). Refinement always renders at full resolution.
 - **Camera clip planes:** near 0.03 m, far 2000 m.
 - **Shadows:** the shadow map is rendered once after load (`renderer.shadowMap.autoUpdate = false`), since the scene is static.
 - **No SSAO or SSR.** Both fight the accumulation and cost per sample. Ambient occlusion comes from the glTF AO maps.
@@ -680,7 +680,8 @@ Each milestone ends in something you can run and check.
 5. **Refinement cost** is roughly 256 × the scene's render cost. If it's too slow, lower the sample target or the resolution in `config.ts`.
 6. **No metering.** EV100 is fixed per time of day, so pointing at the bright sky doesn't change the Av shutter speed.
 7. **Night costs more.** Night and evening add ~30 lights, so each refinement sample costs more than at golden hour. Not yet measured on the reference machine.
-8. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
+8. **Shader compiles in Firefox.** Firefox has no `KHR_parallel_shader_compile`, so a shader query blocks the page until the shader is linked. Shaders are compiled for the right render target, then waited on with a fence (polling a fence doesn't block in Firefox), behind the loading screen or the old image (`compileShaders.ts`). Shadow-map depth, sky background and output shaders can't be compiled ahead, so the loading screen stays up over the first frame. Firefox and Safari have no GPU timer queries either; `?bench=1` measures rates and times instead.
+9. **Night bokeh edges.** Bulbs at night are far above white, so even a few of the 256 samples saturate and disc edges look slightly scalloped. A higher sample target smooths them.
 
 ## 16. Adding cameras and lenses later
 
