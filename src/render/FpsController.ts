@@ -15,7 +15,7 @@ export interface Pose { x: number; z: number; eyeHeight: number; yaw: number; pi
 
 /**
  * FPS-style input: pointer-lock mouse look, WASD walking with smoothing,
- * Q/E eye height, and circle-vs-collider push-out (§9.3, §11.6).
+ * Q/E eye height, and circle-vs-collider push-out (§9.3, §11.6). Walking keeps working while the mouse is suspended.
  * Yaw 0 looks down −z; positive yaw turns left.
  */
 export class FpsController {
@@ -32,9 +32,12 @@ export class FpsController {
   private spawn: Spawn = { x: 0, z: 0, eyeHeightM: CONFIG.eyeHeightM.default, yawDeg: 0, pitchDeg: 0 };
 
   private readonly target: HTMLElement;
+  /** While true, the mouse belongs to something else (the lens wheel): no look, and clicks don't capture it. */
+  private readonly mouseSuspended: () => boolean;
 
-  constructor(target: HTMLElement) {
+  constructor(target: HTMLElement, mouseSuspended: () => boolean = () => false) {
     this.target = target;
+    this.mouseSuspended = mouseSuspended;
     target.addEventListener('click', this.onClick);
     document.addEventListener('mousemove', this.onMouseMove);
     document.addEventListener('pointerlockchange', this.onLockChange);
@@ -166,6 +169,7 @@ export class FpsController {
   }
 
   private onClick = () => {
+    if (this.mouseSuspended()) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
     if (!this.locked) this.target.requestPointerLock()?.catch?.(() => {});
   };
@@ -175,7 +179,7 @@ export class FpsController {
   };
 
   private onMouseMove = (e: MouseEvent) => {
-    if (!this.locked) return;
+    if (!this.locked || this.mouseSuspended()) return;
     if (this.skipMove || Math.abs(e.movementX) > 300 || Math.abs(e.movementY) > 300) {
       this.skipMove = false;
       return;

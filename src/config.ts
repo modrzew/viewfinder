@@ -31,6 +31,38 @@ export const CONFIG = {
   /** Eye view (§9.1). */
   eyeHfovDeg: 90,
 
+  /** Side by side (§9.1, §10.9). Lengths are CSS px at HUD scale 1. */
+  sideBySide: {
+    maxFinders: 4,
+    /** A finder has about a third of the full view's width, so its bokeh discs need fewer samples (§10.9). */
+    refineTarget: 128,
+    /** Previews crop the eye image unless that would upscale it more than this (§10.9). */
+    cropMaxUpscale: 2,
+    /** The row, captions included, stays within this fraction of the viewport height. */
+    maxRowHeight: 0.38,
+    /** Each finder is at most this fraction of the viewport width. */
+    maxFinderWidth: 0.36,
+    /** Placement in the gap between the top corner clusters: the HUD's top margin, and the room kept for them. */
+    topPx: 26,
+    cornerReservePx: 250,
+    /** Placement below the top corner clusters, across the full width. */
+    belowCornersPx: 150,
+    sideMarginPx: 28,
+    gapPx: 10,
+    captionPx: 24,
+  },
+
+  /** Lens wheel (§9.2): mouse travel, in px of movement. */
+  lensWheel: {
+    /** The aim is clamped to this length, so reversing direction is quick. */
+    maxAimPx: 120,
+    deadZonePx: 30,
+  },
+
+  /** The HUD scales with the window height: 1× at this height, within the range (§9.2). */
+  hudReferenceHeightPx: 900,
+  hudScaleRange: [0.8, 1.4] as const,
+
   /** Rangefinder (§10.7). */
   rangefinderHz: 10,
 

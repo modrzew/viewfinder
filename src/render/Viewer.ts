@@ -1,29 +1,27 @@
 import {
-  AgXToneMapping, DepthTexture, FloatType, HalfFloatType, NoBlending, PerspectiveCamera, RGBAFormat, ShaderMaterial,
-  Vector3, WebGLRenderer, WebGLRenderTarget, type Texture,
+  AgXToneMapping, DepthTexture, FloatType, HalfFloatType, PerspectiveCamera, RGBAFormat, WebGLRenderer,
+  WebGLRenderTarget,
 } from 'three';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { CONFIG } from '../config';
-import { apertureSamples, gatherKernel, makeApertureShape, pixelJitter } from '../optics/aperture';
-import { getBody } from '../optics/bodies';
+import { pixelJitter } from '../optics/aperture';
 import { getLens } from '../optics/lenses';
-import { deriveOptics } from '../optics/optics';
 import type { DerivedOptics } from '../optics/types';
-import { useStore, type RenderMode, type Settings } from '../state/store';
+import { opticsFor, useStore, type RenderMode, type RefineProgress, type Settings } from '../state/store';
 import type { TimeOfDay } from '../scene/timeOfDay';
 import type { Lighting, SceneSetup } from '../scene/types';
 import { FpsController } from './FpsController';
+import { Finder, sameKey, type Passes } from './Finder';
 import { FrameStats } from './FrameStats';
-import { applyThinLensSample, type ThinLens } from './jitteredProjection';
-import { eyeVfovDeg, frameRect, renderSize, type Rect } from './layout';
-import { Accumulator } from './passes/Accumulator';
-import { GatherDofPass } from './passes/GatherDofPass';
+import { eyeVfovDeg, finderRects, frameLineFractions, frameRect, hudScale, renderSize, type Rect } from './layout';
+import { CropPass } from './passes/CropPass';
 import { LensPass } from './passes/LensPass';
 import { Rangefinder } from './Rangefinder';
-import { FULLSCREEN_VERT, type BlurParams } from './shaders/common';
 
 const RAD = Math.PI / 180;
+
+/** What's on screen: the camera view, the plain eye view, or the eye view with finders side by side (§9.1). */
+type Screen = 'camera' | 'eye' | 'sideBySide';
 
 export interface ViewerOptions {
   loadScene: (
@@ -35,33 +33,30 @@ export interface ViewerOptions {
 
 /**
  * Drives Three.js imperatively; React only renders the UI (§5, §6).
- * Camera view runs INTERACTIVE → REFINING → DONE (§10.1); eye view is a plain render.
+ * Each view of a lens is a Finder running INTERACTIVE → REFINING → DONE (§10.1): one full-size finder in camera
+ * view, one per shown lens side by side (§10.9). The eye view behind them is a plain render. The Viewer owns
+ * the scene render targets, the sample budget and the canvas, and redraws the canvas whenever anything on it
+ * changes.
  */
 export class Viewer {
   private readonly container: HTMLElement;
   private readonly canvas = document.createElement('canvas');
   private readonly renderer: WebGLRenderer;
-  private readonly camera = new PerspectiveCamera();
   private readonly eyeCamera = new PerspectiveCamera();
-  private readonly basePosition = new Vector3();
   private readonly controller: FpsController;
   private readonly stats: FrameStats;
+  private readonly float32: boolean;
 
+  /** The eye image, kept so side by side can crop it; and the scratch target finders render into. */
+  private eyeRT: WebGLRenderTarget;
   private sceneRT: WebGLRenderTarget;
-  private readonly previewRT = new WebGLRenderTarget(1, 1, { type: HalfFloatType, format: RGBAFormat, depthBuffer: false });
-  private readonly accumulator: Accumulator;
-  private readonly gather = new GatherDofPass();
-  private readonly lensPass = new LensPass();
+  private readonly eyeLens = new LensPass();
+  private readonly crop = new CropPass();
   private readonly output = new OutputPass();
-  private readonly copyMaterial = new ShaderMaterial({
-    uniforms: { tSrc: { value: null } },
-    vertexShader: FULLSCREEN_VERT,
-    fragmentShader: 'uniform sampler2D tSrc; varying vec2 vUv; void main() { gl_FragColor = texture2D(tSrc, vUv); }',
-    blending: NoBlending,
-    depthTest: false,
-    depthWrite: false,
-  });
-  private readonly copyQuad = new FullScreenQuad(this.copyMaterial);
+
+  /** Camera view's finder, and side by side's by lens id. Each keeps its image while off screen. */
+  private cameraFinder: Finder | null = null;
+  private readonly finders = new Map<string, Finder>();
 
   private setup: SceneSetup | null = null;
   private lighting: Lighting | null = null;
@@ -76,29 +71,25 @@ export class Viewer {
   private lastTime = 0;
   private frameMs = 16;
 
-  private mode: RenderMode = 'INTERACTIVE';
-  private stillFrames = 0;
+  private screen: Screen | null = null;
   private samplesPerFrame = 1;
   /** GPU fence after the last sample batch, and how many frames it has been pending. */
   private fence: WebGLSync | null = null;
   private fenceFrames = 0;
-  private fadeStart: number | null = null;
-  private presentedMix = -1;
-  private presentedCount = -1;
-  private opticalKey: unknown[] = [];
-  private exposureKey: unknown[] = [];
-  /** What's on screen, so an exposure-only change can re-run LensPass on it. */
-  private shown: { preview: Texture; refined: Texture | null; mix: number } | null = null;
+  private eyeKey: unknown[] = [];
+  private eyeExposureKey: unknown[] = [];
   private poseKey: number[] = [];
+  /** The canvas: where it sits in the viewport (CSS px), and its buffer size. */
   private rect: Rect = { x: 0, y: 0, width: 0, height: 0 };
+  private size = { width: 0, height: 0 };
   private settings: Settings | null = null;
   private opticsEv100 = 0;
-  private optics: DerivedOptics | null = null;
+  /** Derived optics of the selected lens and the shown ones, by lens id. */
+  private optics = new Map<string, DerivedOptics>();
 
-  private apertureKey = '';
-  private aperture: Float32Array = new Float32Array(0);
   private readonly jitter = pixelJitter(CONFIG.apertureSampleCount);
-  private readonly refineTarget = Math.min(Math.max(CONFIG.refineTarget, CONFIG.refineTargetRange[0]), CONFIG.refineTargetRange[1]);
+  private readonly refineTarget = clampTarget(CONFIG.refineTarget);
+  private readonly finderRefineTarget = clampTarget(CONFIG.sideBySide.refineTarget);
 
   private lastRangeTime = 0;
   private rangePoseKey: number[] = [];
@@ -114,13 +105,15 @@ export class Viewer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.autoUpdate = false;
 
-    this.sceneRT = this.makeSceneTarget(1, 1);
-    this.accumulator = new Accumulator(this.supportsFloat32Targets());
+    this.eyeRT = makeSceneTarget(1, 1);
+    this.sceneRT = makeSceneTarget(1, 1);
+    this.float32 = !!this.renderer.getContext().getExtension('EXT_color_buffer_float');
     this.output.renderToScreen = true;
     this.stats = new FrameStats(this.renderer);
     useStore.getState().setRuntime({ refine: { samples: 0, target: this.refineTarget } });
 
-    this.controller = new FpsController(container);
+    // The lens wheel takes over the mouse while it's open (§9.2).
+    this.controller = new FpsController(container, () => useStore.getState().wheel !== null);
     container.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('pointerlockchange', this.onLockChange);
 
@@ -153,14 +146,13 @@ export class Viewer {
     document.removeEventListener('pointerlockchange', this.onLockChange);
     this.rangefinder?.dispose();
     this.setup?.dispose();
+    this.eyeRT.dispose();
     this.sceneRT.dispose();
-    this.previewRT.dispose();
-    this.accumulator.dispose();
-    this.gather.dispose();
-    this.lensPass.dispose();
+    this.cameraFinder?.dispose();
+    for (const f of this.finders.values()) f.dispose();
+    this.eyeLens.dispose();
+    this.crop.dispose();
     this.output.dispose();
-    this.copyMaterial.dispose();
-    this.copyQuad.dispose();
     this.stats.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -177,9 +169,11 @@ export class Viewer {
     if (p.pitchDeg !== undefined) pose.pitch = p.pitchDeg * RAD;
   }
 
-  /** Forces an optical reset on the next frame. */
+  /** Forces an optical reset of every view on the next frame. */
   invalidate(): void {
-    this.opticalKey = [];
+    this.eyeKey = [];
+    this.cameraFinder?.invalidate();
+    for (const f of this.finders.values()) f.invalidate();
   }
 
   private setLighting(lighting: Lighting): void {
@@ -214,7 +208,7 @@ export class Viewer {
         this.timeOfDay = wanted;
         this.compiling = true;
         try {
-          await this.renderer.compileAsync(this.setup!.scene, this.camera);
+          await this.renderer.compileAsync(this.setup!.scene, this.eyeCamera);
         } finally {
           this.compiling = false;
         }
@@ -228,17 +222,6 @@ export class Viewer {
         this.pendingTimeOfDay = null;
         setRuntime({ timeOfDayLoading: null, error: `Couldn't load the ${wanted} sky: ${String(err)}` });
       });
-  }
-
-  private supportsFloat32Targets(): boolean {
-    const gl = this.renderer.getContext();
-    return !!gl.getExtension('EXT_color_buffer_float');
-  }
-
-  private makeSceneTarget(w: number, h: number): WebGLRenderTarget {
-    const rt = new WebGLRenderTarget(w, h, { type: HalfFloatType, format: RGBAFormat, depthBuffer: true });
-    rt.depthTexture = new DepthTexture(w, h, FloatType);
-    return rt;
   }
 
   private frame = (now: number) => {
@@ -259,119 +242,199 @@ export class Viewer {
     if (settings !== this.settings || ev100 !== this.opticsEv100) {
       this.settings = settings;
       this.opticsEv100 = ev100;
-      this.optics = deriveOptics(getBody(settings.bodyId), getLens(settings.lensId), settings, ev100);
+      this.optics.clear();
+      for (const id of new Set([settings.lensId, ...settings.sideBySideLensIds])) {
+        this.optics.set(id, opticsFor(settings, ev100, id));
+      }
     }
-    const optics = this.optics!;
-    const view = settings.view;
+    const selected = this.optics.get(settings.lensId)!;
+    const screen: Screen = settings.view === 'camera' ? 'camera' : settings.sideBySide ? 'sideBySide' : 'eye';
+    const finders = this.syncFinders(screen, settings);
 
-    this.layout(runtime.viewport.width, runtime.viewport.height, view, optics.imageAspect);
+    let redraw = this.layout(runtime.viewport.width, runtime.viewport.height, screen, selected.imageAspect, finders);
     if (!this.setup || this.rect.width <= 0) return;
     this.syncTimeOfDay(settings.timeOfDay);
     // The scene is already relit for the new time of day, but its shaders aren't ready: keep the last image.
     if (this.compiling) return;
 
-    const activeVfov = view === 'eye' ? this.eyeCamera.fov : optics.vfovDeg;
+    const activeVfov = screen === 'camera' ? selected.vfovDeg : this.eyeCamera.fov;
     this.controller.update(dt, Math.tan((activeVfov / 2) * RAD) / Math.tan((CONFIG.lookReferenceVfovDeg / 2) * RAD));
-    this.updateCameras(optics);
-
     const p = this.controller.pose;
-    const passes = state.debug.passes;
     this.poseKey = [p.x, p.z, p.eyeHeight, p.yaw, p.pitch];
-    const key = [...this.poseKey, optics.lens.id, optics.focalMm, optics.fNumber, optics.focusM, view,
-      this.sceneRT.width, this.sceneRT.height, passes.gather, passes.refine, passes.residual];
-    const changed = !sameKey(key, this.opticalKey);
-    this.opticalKey = key;
-    const exposureKey = [optics.exposureFactor, optics.vignetteEv, passes.vignette, this.lighting!.baseExposure];
-    const exposureChanged = !sameKey(exposureKey, this.exposureKey);
-    this.exposureKey = exposureKey;
+    this.updateEyeCamera();
 
-    if (view === 'eye') this.renderEye(changed);
-    else this.renderCamera(changed, now, optics, passes.refine);
-    // Exposure-only change (§10.1): re-run LensPass on what's shown; the accumulation is kept.
-    if (exposureChanged && !changed && this.shown) this.present(this.shown.preview, this.shown.refined, this.shown.mix);
+    redraw ||= screen !== this.screen;
+    this.screen = screen;
+    const passes = state.debug.passes;
+    if (screen !== 'camera') redraw = this.updateEye(selected) || redraw;
+    if (finders.length) redraw = this.updateFinders(finders, screen, now, passes, settings.lensId) || redraw;
+    if (redraw) this.draw(screen, finders);
 
     this.updateRangefinder(now);
-    if (state.debug.mode !== this.mode || state.debug.samplesPerFrame !== this.samplesPerFrame) {
-      state.setDebug({ mode: this.mode, samplesPerFrame: this.mode === 'REFINING' ? this.samplesPerFrame : 0 });
-    }
+    this.publish(screen, finders);
   }
 
-  private renderEye(changed: boolean): void {
+  /** The finders on screen, in loadout order, created as lenses appear; side by side drops lenses no longer shown. */
+  private syncFinders(screen: Screen, s: Settings): Finder[] {
+    if (screen === 'camera') {
+      this.cameraFinder ??= new Finder(s.lensId, this.refineTarget, this.float32);
+      this.cameraFinder.lensId = s.lensId;
+      return [this.cameraFinder];
+    }
+    for (const [id, f] of this.finders) {
+      if (!s.sideBySideLensIds.includes(id)) {
+        f.dispose();
+        this.finders.delete(id);
+      }
+    }
+    if (screen === 'eye') return [];
+    return s.sideBySideLensIds.map((id) => {
+      let f = this.finders.get(id);
+      if (!f) this.finders.set(id, (f = new Finder(id, this.finderRefineTarget, this.float32)));
+      return f;
+    });
+  }
+
+  /**
+   * Sizes the canvas (the camera frame, or the whole viewport for the eye view), the targets and the finders.
+   * Returns true if anything moved or was resized, so the canvas has to be redrawn.
+   */
+  private layout(vw: number, vh: number, screen: Screen, aspect: number, finders: Finder[]): boolean {
+    let changed = false;
+    const r = frameRect(vw, vh, screen === 'camera' ? 'camera' : 'eye', aspect);
+    if (r.x !== this.rect.x || r.y !== this.rect.y || r.width !== this.rect.width || r.height !== this.rect.height) {
+      this.rect = r;
+      Object.assign(this.canvas.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.width}px`, height: `${r.height}px` });
+      changed = true;
+    }
+    const size = renderSize(r.width, r.height, window.devicePixelRatio || 1);
+    if (size.width !== this.size.width || size.height !== this.size.height) {
+      this.size = size;
+      this.renderer.setSize(size.width, size.height, false);
+      useStore.getState().setRuntime({ renderPx: size });
+      changed = true;
+    }
+    if (screen !== 'camera' && (this.eyeRT.width !== size.width || this.eyeRT.height !== size.height)) {
+      this.eyeRT.dispose();
+      this.eyeRT = makeSceneTarget(size.width, size.height);
+      this.eyeLens.setSize(size.width, size.height);
+    }
+
+    // Finder rectangles in buffer px, snapped to whole pixels so each is drawn 1:1.
+    const k = size.width / Math.max(r.width, 1);
+    const rects = screen === 'camera'
+      ? [{ x: 0, y: 0, ...size }]
+      : finderRects(vw, vh, finders.length, aspect, hudScale(vh)).map((f) => ({
+        x: Math.round(f.x * k), y: Math.round(f.y * k), width: Math.round(f.width * k), height: Math.round(f.height * k),
+      }));
+    finders.forEach((f, i) => {
+      if (f.setRect(rects[i])) changed = true;
+    });
+    const scene = rects[0];
+    if (scene && (this.sceneRT.width !== scene.width || this.sceneRT.height !== scene.height)) {
+      this.sceneRT.dispose();
+      this.sceneRT = makeSceneTarget(scene.width, scene.height);
+    }
+    return changed;
+  }
+
+  private updateEyeCamera(): void {
+    const p = this.controller.pose;
+    const cam = this.eyeCamera;
+    cam.position.set(p.x, p.eyeHeight, p.z);
+    cam.rotation.set(p.pitch, p.yaw, 0, 'YXZ');
+    cam.near = CONFIG.nearM;
+    cam.far = CONFIG.farM;
+    const aspect = this.rect.width / Math.max(this.rect.height, 1);
+    cam.fov = eyeVfovDeg(aspect);
+    cam.aspect = aspect;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+  }
+
+  /**
+   * The eye image: rendered only when the pose, the size or the lighting changed, at the selected lens's
+   * exposure without vignetting (§10.6). Returns true if it changed.
+   */
+  private updateEye(selected: DerivedOptics): boolean {
+    const key = [...this.poseKey, this.eyeRT.width, this.eyeRT.height];
+    const changed = !sameKey(key, this.eyeKey);
+    this.eyeKey = key;
     if (changed) {
-      this.renderer.setRenderTarget(this.sceneRT);
+      this.renderer.setRenderTarget(this.eyeRT);
       this.renderer.render(this.setup!.scene, this.eyeCamera);
-      this.present(this.sceneRT.texture, null, 0);
     }
-    this.mode = 'DONE';
-    this.publishSamples(0);
+    const exposure = this.lighting!.baseExposure * selected.exposureFactor;
+    const exposureChanged = !sameKey([exposure], this.eyeExposureKey);
+    this.eyeExposureKey = [exposure];
+    if (changed || exposureChanged) this.eyeLens.render(this.renderer, this.eyeRT.texture, null, { mix: 0, exposure, vignetteEv: 0 });
+    return changed || exposureChanged;
   }
 
-  private renderCamera(changed: boolean, now: number, optics: DerivedOptics, refineEnabled: boolean): void {
-    if (changed) {
-      this.mode = 'INTERACTIVE';
-      this.stillFrames = 0;
-      this.fadeStart = null;
-      this.presentedMix = this.presentedCount = -1;
-      this.dropFence();
-      this.accumulator.reset();
-      this.publishSamples(0);
-      this.renderPreview(optics);
-      this.present(this.previewRT.texture, null, 0);
-      return;
+  /** One frame of every finder's state machine (§10.1). Returns true if what any of them shows changed. */
+  private updateFinders(finders: Finder[], screen: Screen, now: number, passes: Passes, selectedId: string): boolean {
+    const baseExposure = this.lighting!.baseExposure;
+    for (const f of finders) {
+      const changed = f.sync(this.controller.pose, this.optics.get(f.lensId)!, passes, baseExposure);
+      if (changed) this.renderPreview(f, screen === 'sideBySide', passes.gather);
+      else f.settle(passes.refine);
     }
-
-    if (this.mode === 'INTERACTIVE') {
-      if (++this.stillFrames >= CONFIG.stillFrames) this.mode = refineEnabled ? 'REFINING' : 'DONE';
-      return;
+    this.refine(finders, selectedId, passes.residual);
+    let changed = false;
+    for (const f of finders) {
+      f.fade(now);
+      if (!f.dirty) continue;
+      f.present(this.renderer, baseExposure, passes.vignette);
+      changed = true;
     }
-
-    if (this.mode === 'REFINING') {
-      const acc = this.accumulator;
-      if (acc.count < this.refineTarget && this.batchDone()) {
-        const n = Math.min(this.samplesPerFrame, this.refineTarget - acc.count);
-        this.renderSamples(optics, n);
-        this.publishSamples(acc.count);
-        const gl = this.renderer.getContext() as WebGL2RenderingContext;
-        this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-        gl.flush();
-      }
-      if (acc.count >= CONFIG.previewUntilSamples) {
-        this.fadeStart ??= now;
-        const t = Math.min((now - this.fadeStart) / CONFIG.crossfadeMs, 1);
-        // Present only when the image changed, so presents don't compete with sampling.
-        if (t !== this.presentedMix || acc.count !== this.presentedCount) {
-          this.present(this.previewRT.texture, acc.texture, t);
-          this.presentedMix = t;
-          this.presentedCount = acc.count;
-        }
-        if (t >= 1 && acc.count >= this.refineTarget) this.mode = 'DONE';
-      }
-    }
+    return changed;
   }
 
-  /** Centred render → gather DoF (or a plain copy when disabled) → preview buffer. */
-  private renderPreview(o: DerivedOptics): void {
-    this.renderer.setRenderTarget(this.sceneRT);
-    this.renderer.render(this.setup!.scene, this.camera);
-    if (useStore.getState().debug.passes.gather) {
-      this.updateApertureShape(o);
-      this.gather.render(this.renderer, this.sceneRT.texture, this.sceneRT.depthTexture!, this.previewRT,
-        this.blurParams(o), CONFIG.gatherMaxRadiusPx);
+  /**
+   * Scene → gather DoF (or a plain copy when disabled) → the finder's preview. Side by side, the scene is a crop
+   * of the eye image, so moving costs one scene render however many finders there are, and changing a lens
+   * costs none (§10.9). Long lenses on small windows would upscale the crop too much, and very wide windows
+   * cut off a lens's frame; those get a render of their own.
+   */
+  private renderPreview(f: Finder, sideBySide: boolean, gather: boolean): void {
+    const o = f.optics!;
+    const crop = sideBySide ? frameLineFractions(o.hfovDeg, o.vfovDeg, this.eyeCamera.aspect) : null;
+    const cropOk = crop && crop.halfWidth <= 1 && crop.halfHeight <= 1
+      && f.rect.width / (crop.halfWidth * this.eyeRT.width) <= CONFIG.sideBySide.cropMaxUpscale;
+    if (cropOk) {
+      this.crop.render(this.renderer, this.eyeRT, this.sceneRT, crop.halfWidth, crop.halfHeight);
     } else {
-      this.copyMaterial.uniforms.tSrc.value = this.sceneRT.texture;
-      this.renderer.setRenderTarget(this.previewRT);
-      this.copyQuad.render(this.renderer);
+      this.renderer.setRenderTarget(this.sceneRT);
+      this.renderer.render(this.setup!.scene, f.camera);
     }
+    if (gather) f.gatherPreview(this.renderer, this.sceneRT);
+    else this.crop.render(this.renderer, this.sceneRT, f.previewRT, 1, 1);
   }
 
-  /** Regenerates aperture samples and the gather kernel when the blade shape changes (§10.5). */
-  private updateApertureShape(o: DerivedOptics): void {
-    const key = `${o.blades}:${o.roundness}`;
-    if (key === this.apertureKey) return;
-    this.apertureKey = key;
-    const shape = makeApertureShape(o.blades, o.roundness);
-    this.aperture = apertureSamples(shape, CONFIG.apertureSampleCount);
-    this.gather.setKernel(gatherKernel(shape, CONFIG.gatherKernelSize), shape.areaScale);
+  /**
+   * Thin-lens samples for the refining finders (§10.3), sharing one batch per frame. The finder with the fewest
+   * samples goes next, the selected lens first on a tie, so they converge together.
+   */
+  private refine(finders: Finder[], selectedId: string, residual: boolean): void {
+    const queue = finders.filter((f) => f.needsSamples);
+    if (queue.length === 0) {
+      this.dropFence();
+      return;
+    }
+    if (!this.batchDone()) return;
+    const rank = (f: Finder) => (f.lensId === selectedId ? -1 : finders.indexOf(f));
+    const sampled = new Set<Finder>();
+    for (let i = 0; i < this.samplesPerFrame && queue.length; i++) {
+      queue.sort((a, b) => a.samples - b.samples || rank(a) - rank(b));
+      const f = queue[0];
+      f.renderSample(this.renderer, this.setup!.scene, this.sceneRT, this.jitter, CONFIG.residualBlur && residual);
+      sampled.add(f);
+      if (!f.needsSamples) queue.shift();
+    }
+    for (const f of sampled) f.restoreCamera();
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
   }
 
   /**
@@ -403,107 +466,37 @@ export class Viewer {
     this.fenceFrames = 0;
   }
 
-  private renderSamples(o: DerivedOptics, count: number): void {
-    this.updateApertureShape(o);
-    const w = this.sceneRT.width;
-    const h = this.sceneRT.height;
-    const lens: ThinLens = {
-      focalM: o.focalMm / 1000,
-      apertureM: o.apertureMm / 1000,
-      focusM: o.focusM,
-      tanHalfH: Math.tan((o.hfovDeg / 2) * RAD),
-      tanHalfV: Math.tan((o.vfovDeg / 2) * RAD),
-      near: CONFIG.nearM,
-      far: CONFIG.farM,
-      widthPx: w,
-      heightPx: h,
-    };
-    const blur = this.blurParams(o);
-    const passes = useStore.getState().debug.passes;
-    const residual = CONFIG.residualBlur && passes.residual ? CONFIG.residualBlurK / Math.sqrt(this.refineTarget) : 0;
-    const { scene } = this.setup!;
-    this.basePosition.copy(this.camera.position);
-
-    for (let i = 0; i < count; i++) {
-      const s = this.accumulator.count % CONFIG.apertureSampleCount;
-      applyThinLensSample(this.camera, this.basePosition, lens,
-        this.aperture[s * 2], this.aperture[s * 2 + 1], this.jitter[s * 2], this.jitter[s * 2 + 1]);
-      this.renderer.setRenderTarget(this.sceneRT);
-      this.renderer.render(scene, this.camera);
-      this.accumulator.add(this.renderer, this.sceneRT.texture, this.sceneRT.depthTexture!, blur, residual, CONFIG.residualBlurMaxPx);
-    }
-
-    // Restore the centred camera.
-    this.camera.position.copy(this.basePosition);
-    this.camera.updateProjectionMatrix();
-    this.camera.updateMatrixWorld();
+  /**
+   * Redraws the canvas from what's cached: the drawing buffer isn't preserved, so everything goes again
+   * whenever anything changed. The eye image fills it, then each finder goes into its rectangle.
+   */
+  private draw(screen: Screen, finders: Finder[]): void {
+    const r = this.renderer;
+    if (screen !== 'camera') this.output.render(r, null as never, this.eyeLens.target, 0, false);
+    for (const f of finders) f.draw(r, this.output, this.size.height);
+    r.setViewport(0, 0, this.size.width, this.size.height);
+    r.setScissor(0, 0, this.size.width, this.size.height);
+    r.setScissorTest(false);
   }
 
-  private blurParams(o: DerivedOptics): BlurParams {
-    return {
-      focalMm: o.focalMm,
-      apertureMm: o.apertureMm,
-      focusM: o.focusM,
-      sensorWidthMm: o.sensorWidthMm,
-      renderWidthPx: this.sceneRT.width,
-      near: CONFIG.nearM,
-      far: CONFIG.farM,
-    };
-  }
-
-  private present(preview: Texture, refined: Texture | null, mix: number): void {
-    const o = this.optics!;
-    const vignette = this.settings!.view === 'camera' && useStore.getState().debug.passes.vignette;
-    this.lensPass.render(this.renderer, preview, refined, {
-      mix,
-      exposure: this.lighting!.baseExposure * o.exposureFactor,
-      vignetteEv: vignette ? o.vignetteEv : 0,
-    });
-    this.output.render(this.renderer, null as never, this.lensPass.target, 0, false);
-    this.shown = { preview, refined, mix };
-  }
-
-  private publishSamples(samples: number): void {
+  /** Mode and refinement progress of the whole screen, and of each finder side by side. */
+  private publish(screen: Screen, finders: Finder[]): void {
     const state = useStore.getState();
-    if (state.runtime.refine.samples !== samples) state.setRuntime({ refine: { samples, target: this.refineTarget } });
-  }
+    const mode: RenderMode = finders.some((f) => f.mode === 'INTERACTIVE') ? 'INTERACTIVE'
+      : finders.some((f) => f.mode === 'REFINING') ? 'REFINING' : 'DONE';
+    const samplesPerFrame = mode === 'REFINING' ? this.samplesPerFrame : 0;
+    if (state.debug.mode !== mode || state.debug.samplesPerFrame !== samplesPerFrame) state.setDebug({ mode, samplesPerFrame });
 
-  private layout(vw: number, vh: number, view: Settings['view'], aspect: number): void {
-    const r = frameRect(vw, vh, view, aspect);
-    if (r.x !== this.rect.x || r.y !== this.rect.y || r.width !== this.rect.width || r.height !== this.rect.height) {
-      this.rect = r;
-      Object.assign(this.canvas.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.width}px`, height: `${r.height}px` });
-    }
-    const size = renderSize(r.width, r.height, window.devicePixelRatio || 1);
-    if (size.width !== this.sceneRT.width || size.height !== this.sceneRT.height) {
-      this.renderer.setSize(size.width, size.height, false);
-      this.sceneRT.dispose();
-      this.sceneRT = this.makeSceneTarget(size.width, size.height);
-      this.previewRT.setSize(size.width, size.height);
-      this.accumulator.setSize(size.width, size.height);
-      this.gather.setSize(size.width, size.height);
-      this.lensPass.setSize(size.width, size.height);
-      useStore.getState().setRuntime({ renderPx: size });
-    }
-  }
-
-  private updateCameras(o: DerivedOptics): void {
-    const p = this.controller.pose;
-    for (const cam of [this.camera, this.eyeCamera]) {
-      cam.position.set(p.x, p.eyeHeight, p.z);
-      cam.rotation.set(p.pitch, p.yaw, 0, 'YXZ');
-      cam.near = CONFIG.nearM;
-      cam.far = CONFIG.farM;
-    }
-    this.camera.fov = o.vfovDeg;
-    this.camera.aspect = o.imageAspect;
-    const eyeAspect = this.rect.width / Math.max(this.rect.height, 1);
-    this.eyeCamera.fov = eyeVfovDeg(eyeAspect);
-    this.eyeCamera.aspect = eyeAspect;
-    for (const cam of [this.camera, this.eyeCamera]) {
-      cam.updateProjectionMatrix();
-      cam.updateMatrixWorld();
-    }
+    const refine = finders.length
+      ? { samples: sum(finders, (f) => f.samples), target: sum(finders, (f) => f.refineTarget) }
+      : { samples: 0, target: this.refineTarget };
+    const finderRefine: Record<string, RefineProgress> = {};
+    if (screen === 'sideBySide') for (const f of finders) finderRefine[f.lensId] = { samples: f.samples, target: f.refineTarget };
+    const rt = state.runtime;
+    const patch: Partial<typeof rt> = {};
+    if (rt.refine.samples !== refine.samples || rt.refine.target !== refine.target) patch.refine = refine;
+    if (!sameProgress(rt.finderRefine, finderRefine)) patch.finderRefine = finderRefine;
+    if (patch.refine || patch.finderRefine) state.setRuntime(patch);
   }
 
   private updateRangefinder(now: number): void {
@@ -511,7 +504,7 @@ export class Viewer {
     if (sameKey(this.poseKey, this.rangePoseKey)) return;
     this.lastRangeTime = now;
     this.rangePoseKey = this.poseKey;
-    const d = this.rangefinder.measure(this.camera);
+    const d = this.rangefinder.measure(this.eyeCamera);
     const state = useStore.getState();
     if (d !== state.runtime.centreDistanceM) state.setRuntime({ centreDistanceM: d });
   }
@@ -537,8 +530,22 @@ export class Viewer {
   };
 }
 
-function sameKey(a: unknown[], b: unknown[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+function makeSceneTarget(w: number, h: number): WebGLRenderTarget {
+  const rt = new WebGLRenderTarget(w, h, { type: HalfFloatType, format: RGBAFormat, depthBuffer: true });
+  rt.depthTexture = new DepthTexture(w, h, FloatType);
+  return rt;
+}
+
+function clampTarget(n: number): number {
+  return Math.min(Math.max(n, CONFIG.refineTargetRange[0]), CONFIG.refineTargetRange[1]);
+}
+
+function sum<T>(items: T[], f: (item: T) => number): number {
+  return items.reduce((acc, item) => acc + f(item), 0);
+}
+
+function sameProgress(a: Record<string, RefineProgress>, b: Record<string, RefineProgress>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => b[k] && a[k].samples === b[k].samples && a[k].target === b[k].target);
 }

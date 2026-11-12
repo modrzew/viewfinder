@@ -95,6 +95,263 @@ kbd {
   text-shadow: var(--hud-shadow);
 }
 
+/* Side by side: the frame lines pass behind the finders, which cover the tops of wide frames, so labels go to the bottom. */
+.frame-lines-clip {
+  position: absolute;
+  inset: 0;
+}
+
+.frame-lines.labelled-below .frame-lines-label {
+  left: 50%;
+  top: auto;
+  bottom: 5px;
+  transform: translateX(-50%);
+}
+
+.frame-lines.on {
+  border-color: var(--accent);
+}
+
+.frame-lines.on .frame-lines-label {
+  color: var(--accent);
+}
+
+/* ---------- Side by side ---------- */
+
+/* Floating viewfinders over the eye view; the canvas draws the image inside each box. */
+.finders {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.finder {
+  position: absolute;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9), 0 0 0 2.5px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+.finder.on {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 3px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+.finder-af {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(12px * var(--hud-scale));
+  height: calc(12px * var(--hud-scale));
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+  border-radius: 2px;
+}
+
+.finder-refine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.finder-refine div {
+  height: 100%;
+  background: #fff;
+}
+
+/* One line under the finder, in the HUD's type. */
+.finder-caption {
+  position: absolute;
+  top: calc(100% + 6px * var(--hud-scale));
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: calc(12px * var(--hud-scale));
+  font: 700 calc(16px * var(--hud-scale))/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: var(--hud-shadow);
+  white-space: nowrap;
+}
+
+.finder-focal b {
+  font-size: calc(18px * var(--hud-scale));
+}
+
+.finder-focal small {
+  margin-left: 1px;
+  font-size: calc(12px * var(--hud-scale));
+}
+
+.finder-range {
+  margin-left: calc(-6px * var(--hud-scale));
+  font-weight: 600;
+  color: var(--hud-dim);
+  opacity: 0.8;
+}
+
+.finder-caption .warn {
+  color: var(--warn);
+}
+
+/* ---------- Lens wheel ---------- */
+
+.viewport.wheel-open {
+  cursor: none;
+}
+
+/* A light scrim: the scene keeps rendering behind it. */
+.wheel-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--hud-shadow);
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.3) 30%, rgba(0, 0, 0, 0.12) 70%);
+  pointer-events: none;
+}
+
+.wheel {
+  position: relative;
+  zoom: var(--hud-scale);
+}
+
+.wheel > svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.45));
+}
+
+.wheel-slice {
+  fill: rgba(12, 12, 16, 0.62);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1;
+}
+
+.wheel-slice.on {
+  fill: #fff;
+  stroke: #fff;
+}
+
+/* The selected lens, like the equipped weapon. */
+.wheel-selected {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+}
+
+.wheel-hub-plate {
+  fill: rgba(12, 12, 16, 0.8);
+}
+
+.wheel-pointer {
+  fill: #fff;
+}
+
+.wheel-label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+.wheel-label-focal {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font: 700 28px/1 var(--font);
+}
+
+.wheel-label-focal small {
+  font-size: 15px;
+}
+
+.wheel-label-aperture {
+  font: 600 16px/1 var(--font);
+  color: var(--hud-dim);
+}
+
+.wheel-label.selected:not(.on) .wheel-label-focal {
+  color: var(--accent);
+}
+
+.wheel-label-finder {
+  width: 18px;
+  height: 18px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.wheel-label-finder.off {
+  opacity: 0.45;
+}
+
+.wheel-label.on {
+  color: #111;
+  text-shadow: none;
+}
+
+.wheel-label.on .wheel-label-aperture {
+  color: #444;
+}
+
+.wheel-label.on .wheel-label-finder {
+  filter: none;
+}
+
+.wheel-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 178px;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.wheel-hub-name {
+  margin-bottom: 3px;
+  font: italic 700 18px/1.1 var(--font);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.wheel-hub-hint {
+  font: 600 15px/1.2 var(--font);
+  color: var(--hud-dim);
+}
+
+.wheel-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 15px/1 var(--font);
+  white-space: nowrap;
+}
+
+.wheel-prompt svg {
+  width: 21px;
+  height: 21px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.wheel-prompt.off {
+  opacity: 0.4;
+}
+
 /* Like a subtitle. */
 .lock-hint {
   position: absolute;
@@ -361,6 +618,18 @@ kbd {
   text-shadow: none;
 }
 
+/* Side by side: lenses with a finder. */
+.hud-slots span.shown {
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+
+/* The lens wheel's prompt. */
+.hud-wheel-icon {
+  width: 22px;
+  height: 22px;
+  margin: 0 8px 0 -1px;
+}
+
 /* Top left */
 
 .hud-chips {
@@ -407,6 +676,16 @@ kbd {
 .hud-chip-status {
   font: 600 15px/1 var(--font);
   color: var(--accent);
+}
+
+/* A toggle that's off. */
+.hud-chip.off {
+  opacity: 0.55;
+}
+
+.hud-chip.off .hud-badge {
+  color: #fff;
+  background: var(--hud-plate);
 }
 
 /* Top right */
@@ -475,6 +754,11 @@ kbd {
   border-left: 4px solid var(--accent);
   text-shadow: none;
   transform: translate(-50%, -50%);
+}
+
+/* Side by side: under the finder row (`top` is set inline). */
+.hud-details.below {
+  transform: translateX(-50%);
 }
 
 .hud-details h2 {
