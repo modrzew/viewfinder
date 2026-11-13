@@ -6,9 +6,13 @@ import { clampFocal, clampFocusM, deriveOptics, widestAt, narrowestAt, DEFAULT_E
 import { focusMToSlider, sliderToFocusM, FOCUS_SLIDER_MAX } from '../optics/focusScale';
 import { APERTURE_STOPS, nearestStopIndex } from '../optics/stops';
 import type { DerivedOptics, ExposureMode, ManualLock } from '../optics/types';
+import { finderRects, hudScale, type Rect } from '../render/layout';
 import { DEFAULT_TIME_OF_DAY, TIMES_OF_DAY, type TimeOfDay } from '../scene/timeOfDay';
 
 export type View = 'camera' | 'eye';
+/** Which UI the HUD shows: key prompts for mouse and keyboard, or touch controls (§9.5). */
+export type InputMode = 'mouse' | 'touch';
+export interface Insets { top: number; right: number; bottom: number; left: number }
 export type RenderMode = 'INTERACTIVE' | 'REFINING' | 'DONE';
 
 export interface Settings {
@@ -47,6 +51,8 @@ export interface Runtime {
   timeOfDayLoading: { timeOfDay: TimeOfDay; loadedBytes: number; totalBytes: number } | null;
   /** Size of the viewport (the whole window), CSS px. */
   viewport: { width: number; height: number };
+  /** The viewport's safe-area insets (notch, home indicator), CSS px. */
+  safeArea: Insets;
   /** Size of the render buffer in device px. */
   renderPx: { width: number; height: number };
   pointerLocked: boolean;
@@ -74,6 +80,9 @@ export interface DebugInfo {
  */
 export interface Wheel { lensId: string | null; clicked: boolean }
 
+/** The touch joystick while a thumb holds it: its centre in viewport CSS px, and the knob's offset from it. */
+export interface TouchStick { x: number; y: number; dx: number; dy: number; run: boolean }
+
 /** `?bench=1`: progress while it runs, then the report. */
 export interface BenchState {
   status: string;
@@ -90,6 +99,10 @@ interface Store {
   /** The full readout, shown while Tab is held. */
   detailsOpen: boolean;
   wheel: Wheel | null;
+  input: InputMode;
+  touchStick: TouchStick | null;
+  /** Whether the view has been dragged yet, which retires the touch hint. */
+  touchLooked: boolean;
 
   setBody(id: string): void;
   /** Selects a lens. Side by side, it also gets a finder (at the cap, in place of the previous selection). */
@@ -119,6 +132,9 @@ interface Store {
   clickWheel(): void;
   /** `commit` selects the lens under the aim, unless a click was made; otherwise the wheel just closes. */
   closeWheel(commit: boolean): void;
+  setInput(input: InputMode): void;
+  setTouchStick(stick: TouchStick | null): void;
+  setTouchLooked(): void;
   setRuntime(patch: Partial<Runtime>): void;
   setDebug(patch: Partial<DebugInfo>): void;
   setBench(bench: BenchState | null): void;
@@ -166,6 +182,11 @@ function normalize(s: Settings): Settings {
 
 const DEFAULT_LENS = getLens('ef-50-1.8-stm');
 
+/** Touch UI when the primary pointer is a finger; after that, the last pointer used decides (§9.5). */
+function initialInput(): InputMode {
+  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
+}
+
 const DEFAULT_SETTINGS: Settings = normalize({
   bodyId: BODIES[0].id,
   lensId: DEFAULT_LENS.id,
@@ -193,6 +214,7 @@ export const useStore = create<Store>()((set, get) => {
       ev100: DEFAULT_EV100,
       timeOfDayLoading: null,
       viewport: { width: 0, height: 0 },
+      safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
       renderPx: { width: 0, height: 0 },
       pointerLocked: false,
       error: null,
@@ -211,6 +233,9 @@ export const useStore = create<Store>()((set, get) => {
     hudVisible: true,
     detailsOpen: false,
     wheel: null,
+    input: initialInput(),
+    touchStick: null,
+    touchLooked: false,
 
     setBody: (id) =>
       update((s) => {
@@ -317,6 +342,11 @@ export const useStore = create<Store>()((set, get) => {
       // After a click, selecting the lens under the aim would bring a finder just removed straight back.
       if (commit && wheel.lensId && !wheel.clicked) get().setLens(wheel.lensId);
     },
+    setInput: (input) => set({ input }),
+    setTouchStick: (touchStick) => set({ touchStick }),
+    setTouchLooked: () => {
+      if (!get().touchLooked) set({ touchLooked: true });
+    },
     setRuntime: (patch) => set((st) => ({ runtime: { ...st.runtime, ...patch } })),
     setDebug: (patch) => set((st) => ({ debug: { ...st.debug, ...patch } })),
     setBench: (bench) => set({ bench }),
@@ -330,4 +360,21 @@ export function useOptics(): DerivedOptics {
   const settings = useStore((s) => s.settings);
   const ev100 = useStore((s) => s.runtime.ev100);
   return opticsFor(settings, ev100);
+}
+
+/** The HUD's scale for the window and input mode (§9.2, §9.5). */
+export function hudScaleOf(st: { runtime: Runtime; input: InputMode }): number {
+  const { width, height } = st.runtime.viewport;
+  return hudScale(width, height, st.input === 'touch');
+}
+
+export function useHudScale(): number {
+  return useStore(hudScaleOf);
+}
+
+/** Side by side: where the finders go, CSS px, whether or not it's on screen. */
+export function finderRectsOf(st: { settings: Settings; runtime: Runtime; input: InputMode }): Rect[] {
+  const { width, height } = st.runtime.viewport;
+  const aspect = getBody(st.settings.bodyId).imageAspect;
+  return finderRects(width, height, st.settings.sideBySideLensIds.length, aspect, hudScaleOf(st), st.runtime.safeArea);
 }

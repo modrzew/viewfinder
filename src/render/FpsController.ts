@@ -1,5 +1,6 @@
 import { CONFIG } from '../config';
 import type { Collider, Spawn, WalkArea } from '../scene/types';
+import { releaseTouchPad, touchPad } from '../state/touchPad';
 
 const DEG = Math.PI / 180;
 
@@ -16,6 +17,7 @@ export interface Pose { x: number; z: number; eyeHeight: number; yaw: number; pi
 /**
  * FPS-style input: pointer-lock mouse look, WASD walking with smoothing,
  * Q/E eye height, and circle-vs-collider push-out (§9.3, §11.6). Walking keeps working while the mouse is suspended.
+ * The touch UI drives it through `touchPad` (§9.5): the joystick walks, and dragging the view looks.
  * Yaw 0 looks down −z; positive yaw turns left.
  */
 export class FpsController {
@@ -32,7 +34,10 @@ export class FpsController {
   private spawn: Spawn = { x: 0, z: 0, eyeHeightM: CONFIG.eyeHeightM.default, yawDeg: 0, pitchDeg: 0 };
 
   private readonly target: HTMLElement;
-  /** While true, the mouse belongs to something else (the lens wheel): no look, and clicks don't capture it. */
+  /**
+   * While true, the mouse belongs to something else (the lens wheel, or the touch UI, whose taps arrive as
+   * clicks too): no look, and clicks don't capture it.
+   */
   private readonly mouseSuspended: () => boolean;
 
   constructor(target: HTMLElement, mouseSuspended: () => boolean = () => false) {
@@ -73,21 +78,44 @@ export class FpsController {
     this.vx = this.vz = 0;
   }
 
-  /** Advances the pose by `dt` seconds. `lookScale` = tan(vfov/2) / tan(vfov_ref/2). */
-  update(dt: number, lookScale: number): void {
+  /**
+   * Advances the pose by `dt` seconds. `lookScale` = tan(vfov/2) / tan(vfov_ref/2). `touchRadPerPx` turns a
+   * finger's travel on the view into an angle that keeps the scene under the finger.
+   */
+  update(dt: number, lookScale: number, touchRadPerPx: number): void {
     const p = this.pose;
+    const pitchLimit = CONFIG.pitchLimitDeg * DEG;
 
     if (this.lookDx !== 0 || this.lookDy !== 0) {
       const k = CONFIG.lookRadPerPx * lookScale;
       p.yaw -= this.lookDx * k;
-      p.pitch = Math.min(Math.max(p.pitch - this.lookDy * k, -CONFIG.pitchLimitDeg * DEG), CONFIG.pitchLimitDeg * DEG);
+      p.pitch = Math.min(Math.max(p.pitch - this.lookDy * k, -pitchLimit), pitchLimit);
       this.lookDx = this.lookDy = 0;
+    }
+    // Touch drags the scene, so it turns the other way to the mouse.
+    if (touchPad.lookDx !== 0 || touchPad.lookDy !== 0) {
+      p.yaw += touchPad.lookDx * touchRadPerPx;
+      p.pitch = Math.min(Math.max(p.pitch + touchPad.lookDy * touchRadPerPx, -pitchLimit), pitchLimit);
+      touchPad.lookDx = touchPad.lookDy = 0;
+    }
+    if (touchPad.respawn) {
+      touchPad.respawn = false;
+      this.resetToSpawn();
     }
 
     const k = this.keys;
-    const fwd = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
-    const strafe = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
-    const speed = CONFIG.walkSpeedMps * (k.has('ShiftLeft') || k.has('ShiftRight') ? CONFIG.runMultiplier : 1);
+    let fwd = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
+    let strafe = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+    let run = k.has('ShiftLeft') || k.has('ShiftRight');
+    // Keys walk at full speed; the joystick walks slower the less it's pushed.
+    let amount = 1;
+    if (fwd === 0 && strafe === 0) {
+      fwd = touchPad.forward;
+      strafe = touchPad.strafe;
+      run = touchPad.run;
+      amount = Math.min(Math.hypot(fwd, strafe), 1);
+    }
+    const speed = CONFIG.walkSpeedMps * (run ? CONFIG.runMultiplier : 1) * amount;
     let tx = 0;
     let tz = 0;
     if (fwd !== 0 || strafe !== 0) {
@@ -109,7 +137,7 @@ export class FpsController {
       this.collide();
     }
 
-    const dh = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
+    const dh = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0) || touchPad.height;
     if (dh !== 0) {
       const { min, max } = CONFIG.eyeHeightM;
       p.eyeHeight = Math.min(Math.max(p.eyeHeight + dh * CONFIG.eyeHeightSpeedMps * dt, min), max);
@@ -171,7 +199,8 @@ export class FpsController {
   private onClick = () => {
     if (this.mouseSuspended()) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
-    if (!this.locked) this.target.requestPointerLock()?.catch?.(() => {});
+    // Not every mobile browser has pointer lock.
+    if (!this.locked) this.target.requestPointerLock?.()?.catch?.(() => {});
   };
 
   private onLockChange = () => {
@@ -200,5 +229,6 @@ export class FpsController {
 
   private onBlur = () => {
     this.keys.clear();
+    releaseTouchPad();
   };
 }

@@ -1,6 +1,6 @@
 import { getBody } from '../optics/bodies';
-import { finderRects, frameLineFractions, hudScale, type Rect } from '../render/layout';
-import { opticsFor, sideBySideOnScreen, useStore } from '../state/store';
+import { finderRects, frameLineFractions, type Rect } from '../render/layout';
+import { opticsFor, sideBySideOnScreen, useHudScale, useStore } from '../state/store';
 
 /**
  * A clip path of the whole view with a hole where the row of finders floats, so frame lines pass behind it.
@@ -16,6 +16,10 @@ function behindFinders(width: number, height: number, rects: Rect[]): string {
   return `path(evenodd, "M0 0H${width}V${height}H0ZM${first.x - m} ${first.y - m}h${w}v${h}h${-w}Z")`;
 }
 
+/** Below the screen centre, where the AF distance ends (HUD px), and a frame label's height (CSS px). */
+const AF_DISTANCE_BOTTOM_PX = 34;
+const LABEL_PX = 20;
+
 /**
  * Eye view: the selected lens's frame drawn over the wide view (§9.1). Side by side, every shown lens's, the
  * selected one in the accent colour and on top, labelled at the bottom so the finders above don't cover it.
@@ -23,6 +27,8 @@ function behindFinders(width: number, height: number, rects: Rect[]): string {
 export function FrameLines({ width, height }: { width: number; height: number }) {
   const settings = useStore((s) => s.settings);
   const ev100 = useStore((s) => s.runtime.ev100);
+  const safeArea = useStore((s) => s.runtime.safeArea);
+  const scale = useHudScale();
   if (width <= 0 || height <= 0) return null;
   const sideBySide = sideBySideOnScreen(settings);
   const ids = sideBySide
@@ -36,18 +42,23 @@ export function FrameLines({ width, height }: { width: number; height: number })
     const classes = ['frame-lines'];
     if (sideBySide) classes.push('labelled-below');
     if (sideBySide && id === settings.lensId) classes.push('on');
+    // A frame too short for its label to clear the AF distance (a long lens in portrait) has it underneath.
+    const afBottom = AF_DISTANCE_BOTTOM_PX * scale;
+    const labelTop = sideBySide && h - LABEL_PX < afBottom ? Math.max(2 * h + 4, h + afBottom + 2) : null;
     return (
       <div
         key={id}
         className={classes.join(' ')}
         style={{ left: width / 2 - w, top: height / 2 - h, width: 2 * w, height: 2 * h }}
       >
-        <span className="frame-lines-label">{Math.round(o.focalMm)} mm</span>
+        <span className="frame-lines-label" style={labelTop === null ? undefined : { top: labelTop, bottom: 'auto' }}>
+          {Math.round(o.focalMm)} mm
+        </span>
       </div>
     );
   });
   if (!sideBySide) return frames;
   const aspect = getBody(settings.bodyId).imageAspect;
-  const rects = finderRects(width, height, settings.sideBySideLensIds.length, aspect, hudScale(height));
+  const rects = finderRects(width, height, settings.sideBySideLensIds.length, aspect, scale, safeArea);
   return <div className="frame-lines-clip" style={{ clipPath: behindFinders(width, height, rects) }}>{frames}</div>;
 }

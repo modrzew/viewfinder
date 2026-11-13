@@ -103,6 +103,32 @@ export const CONFIG = {
   hudReferenceHeightPx: 900,
   hudScaleRange: [0.8, 1.4] as const,
 
+  /** Touch UI (§9.5). Lengths are CSS px. */
+  touch: {
+    /** The touch HUD is 1× when the shorter side of the window is this long, within the range. */
+    hudReferencePx: 560,
+    hudScaleRange: [0.6, 1.1] as const,
+    /** A thumb landing in this part of the view (fractions from the left and the top) walks; elsewhere it looks. */
+    stickZone: { maxX: 0.4, minY: 0.35 },
+    /** How far the knob travels; pushing the thumb past `runAt` × that hurries. */
+    stickRadiusPx: 50,
+    runAt: 1.3,
+    /**
+     * A second finger this soon after a thumb lands in the walk zone, before it moves, and this close to it makes
+     * the pair a pinch; two thumbs on either side of a phone are further apart.
+     */
+    pinchGraceMs: 250,
+    pinchMaxSpreadPx: 260,
+    stickMoveTolerancePx: 12,
+    /** A touch that moves less than this and lifts within `tapMs` is a tap (selects a finder side by side). */
+    tapSlopPx: 10,
+    tapMs: 350,
+    /** Stepper buttons repeat while held: after `repeatDelayMs`, every `repeatMs`; big steps after `bigAfterMs`. */
+    repeatDelayMs: 380,
+    repeatMs: 70,
+    bigAfterMs: 1500,
+  },
+
   /** Rangefinder (§10.7). */
   rangefinderHz: 10,
 

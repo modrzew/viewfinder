@@ -7,7 +7,7 @@ import { CONFIG } from '../config';
 import { pixelJitter } from '../optics/aperture';
 import { getLens } from '../optics/lenses';
 import type { DerivedOptics } from '../optics/types';
-import { opticsFor, useStore, type RenderMode, type RefineProgress, type Settings } from '../state/store';
+import { hudScaleOf, opticsFor, useStore, type RenderMode, type RefineProgress, type Settings } from '../state/store';
 import type { TimeOfDay } from '../scene/timeOfDay';
 import type { Lighting, SceneSetup } from '../scene/types';
 import { compileWithoutStalling, gpuIdle, syncSignaled } from './compileShaders';
@@ -15,7 +15,7 @@ import { DynamicResolution } from './DynamicResolution';
 import { FpsController, type Pose } from './FpsController';
 import { Finder, previewSize, sameKey, type Passes } from './Finder';
 import { FrameStats } from './FrameStats';
-import { eyeVfovDeg, finderRects, frameLineFractions, frameRect, hudScale, renderSize, type Rect } from './layout';
+import { eyeVfovDeg, finderRects, frameLineFractions, frameRect, renderSize, type Rect } from './layout';
 import { CropPass } from './passes/CropPass';
 import { LensPass } from './passes/LensPass';
 import { Rangefinder } from './Rangefinder';
@@ -130,8 +130,11 @@ export class Viewer {
     this.stats = new FrameStats(this.renderer);
     useStore.getState().setRuntime({ refine: { samples: 0, target: this.refineTarget } });
 
-    // The lens wheel takes over the mouse while it's open (§9.2).
-    this.controller = new FpsController(container, () => useStore.getState().wheel !== null);
+    // The lens wheel takes over the mouse while it's open (§9.2); the touch UI has no use for it (§9.5).
+    this.controller = new FpsController(container, () => {
+      const s = useStore.getState();
+      return s.wheel !== null || s.input === 'touch';
+    });
     container.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('pointerlockchange', this.onLockChange);
 
@@ -355,7 +358,11 @@ export class Viewer {
     if (this.compiling) return;
 
     const activeVfov = screen === 'camera' ? selected.vfovDeg : this.eyeCamera.fov;
-    this.controller.update(dt, Math.tan((activeVfov / 2) * RAD) / Math.tan((CONFIG.lookReferenceVfovDeg / 2) * RAD));
+    const tanHalfVfov = Math.tan((activeVfov / 2) * RAD);
+    // A finger dragged across the view's height turns it by about its vertical field of view (§9.5).
+    this.controller.update(
+      dt, tanHalfVfov / Math.tan((CONFIG.lookReferenceVfovDeg / 2) * RAD), (2 * tanHalfVfov) / Math.max(this.rect.height, 1),
+    );
     const p = this.controller.pose;
     this.poseKey = [p.x, p.z, p.eyeHeight, p.yaw, p.pitch];
     this.updateEyeCamera();
@@ -434,10 +441,11 @@ export class Viewer {
     }
 
     // Finder rectangles in buffer px, snapped to whole pixels so each is drawn 1:1.
+    const state = useStore.getState();
     const k = size.width / Math.max(r.width, 1);
     const rects = screen === 'camera'
       ? [{ x: 0, y: 0, ...size }]
-      : finderRects(vw, vh, finders.length, aspect, hudScale(vh)).map((f) => ({
+      : finderRects(vw, vh, finders.length, aspect, hudScaleOf(state), state.runtime.safeArea).map((f) => ({
         x: Math.round(f.x * k), y: Math.round(f.y * k), width: Math.round(f.width * k), height: Math.round(f.height * k),
       }));
     finders.forEach((f, i) => {

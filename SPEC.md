@@ -27,7 +27,7 @@ These were agreed with the product owner. Don't reopen them during the build.
 | Lens character | In: bokeh shaped by the real blade count (round wide open, polygonal stopped down) and vignetting at wide apertures. Out: distortion, chromatic aberration, diffraction. |
 | Readout | Focal length, full-frame-equivalent focal length, FOV, f-number, focus distance, DoF near/far limits. Also centre distance and shutter speed. |
 | Download | 50–150 MB is fine behind a loading screen. Hard cap is 80 MB because of Vercel (§12). |
-| Platform | Desktop browsers with mouse and keyboard. Mobile is out of scope. |
+| Platform | Desktop browsers with mouse and keyboard. **Touch** (added after the MVP, at the owner's request): phones and tablets, with the same HUD operated by touch (§9.5). |
 
 ## 3. Scope
 
@@ -35,7 +35,6 @@ These were agreed with the product owner. Don't reopen them during the build.
 
 **Out (MVP):**
 - autofocus
-- mobile/touch
 - other bodies and lenses (the data model is ready for them)
 - distortion, chromatic aberration, diffraction, focus breathing, cat's-eye and onion-ring bokeh
 - image stabilisation, motion blur, ISO noise
@@ -359,6 +358,8 @@ A changed setting briefly turns amber, so a key press shows what it did.
 - A left click toggles that lens's finder and the wheel stays open. After a click, releasing Space only closes the wheel, so a finder just removed doesn't come straight back. If side by side isn't on screen, it comes on (as C) with this lens shown. The last finder can't be removed and nothing is added past 4; if the selected lens loses its finder, the first shown lens is selected. The click doesn't capture the mouse.
 - It closes without doing anything when the window loses focus or pointer lock is lost. It doesn't open while the help overlay is up or the scene is loading. U doesn't hide it.
 
+Touch versions of the HUD and the wheel: §9.5.
+
 ### 9.3 Input
 
 | Input | Action |
@@ -417,6 +418,26 @@ interface Runtime {
   - Each lens keeps its own focal length.
   - Keep the requested focus and f-number; the effective values clamp.
   - Keep `manualLock`.
+
+### 9.5 Touch
+
+Added after the MVP, at the owner's request: the app works on phones and tablets, in the same look, with the HUD operated by touch rather than keys.
+
+- **Input mode** (`input` in the store): touch when the primary pointer is coarse, then whichever pointer was used last (a finger or pen switches to touch, a mouse click or move back), so a touch-screen laptop gets the UI for what it's being used with. Mouse mode is the desktop UI unchanged; keyboard shortcuts work in both.
+- **Gestures on the view** (`ui/TouchLayer.tsx`, a layer between the image and the HUD, so HUD controls get their touches first). The layer and `FpsController` share a virtual gamepad (`state/touchPad.ts`):
+  - One finger drags the scene: a drag of the view's height turns it by about its vertical FOV (`2·tan(vfov/2)/height` rad per px), so what's under the finger stays there, at any focal length. Dragging right turns left, the opposite of the mouse.
+  - A thumb landing on the lower left (left 40%, below the top 35%) is a floating joystick centred where it lands: analog walking speed up to the walk speed, and pushed past 1.3 × its 50 px radius, it hurries (Shift). A second finger landing near it within 250 ms, before it moves, makes the pair a pinch instead.
+  - Two fingers pinch to zoom the selected lens (zoom lenses): focal length × the change in finger spread.
+  - Side by side, a tap on a finder selects its lens.
+- **HUD** (same clusters, same styling; key caps give way to controls):
+  - Rows: ‹ › steppers in place of the keys, drawn like them, step once and repeat while held (big steps, ×10 for focus, after 1.5 s). The aperture and focus bars are sliders: a touch on a segment jumps to it, and dragging moves by the finger's travel. Tapping the exposure row toggles Av/M.
+  - Loadout: the lens slots select, a button opens the lens wheel, the zoom bar is a slider, a pinch icon replaces the mouse-wheel prompt. ▲ ▼ above it hold to raise or lower the eye (Q/E).
+  - Chips are buttons (V, C, T). Top right are buttons for back to spawn (R), full screen (where the Fullscreen API exists; not iPhone Safari), details (toggled, a tap on the card closes it), hide the HUD (a faint button brings it back) and help.
+  - A faint ring above the bottom-left stack shows where the joystick appears.
+- **Lens wheel**: its button opens it until a tap outside the ring. A tap on a slice points at it (a second tap selects it); the hub's prompts become buttons, Select and Show / Add to / Remove from side by side.
+- **Layout**: the touch HUD scales with the shorter side of the window, 1× at 560 px, clamped to 0.6–1.1×, so it fits a phone either way up. `viewport-fit=cover`: the image runs under the notch, while the HUD clusters, the finder row and the help keep to the safe-area insets. In portrait the refine indicator moves under the top clusters, and a frame label that would collide with the AF distance (a long lens's small frame) moves below its frame.
+- **Page**: the view takes every touch (`touch-action: none`; iOS gesture events cancelled), so the page never scrolls, zooms or selects text. The help scrolls when it doesn't fit, with Start pinned in reach, and suggests landscape in portrait. A web app manifest and Apple meta tags let it run from the home screen without the browser's bars.
+- Touch targets reach a few px past what's drawn. Chrome moves a touch onto the nearest element that reacts to touch, so sliders have an `:active` style (and lighten while held) to count as one, and find their segment by hit-testing the touch point rather than trusting the event target.
 
 ## 10. Rendering
 
