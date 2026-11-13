@@ -4,7 +4,7 @@ Walk through a café courtyard at noon, golden hour, evening or night and see it
 
 - Body: Canon EOS 90D (APS-C)
 - Lenses: EF 50mm f/1.8 STM, EF-S 18-55mm f/4-5.6 IS STM
-- Desktop browsers with mouse and keyboard; needs WebGL2 with `EXT_color_buffer_float`
+- Desktop browsers with mouse and keyboard, and phones and tablets by touch; needs WebGL2 with `EXT_color_buffer_float`
 
 See [SPEC.md](SPEC.md) for the optics model, rendering design and known limitations.
 
@@ -39,6 +39,26 @@ Each time of day has its own sky and light level, so the Av shutter speed change
 The counter in the top-right corner shows how many frames per second the GPU finishes, and their average CPU and GPU time. GPU time needs timer queries: Chrome has them, Safari doesn't, and Firefox only with `webgl.enable-privileged-extensions` set to true in about:config. That pref exposes them, and a few debugging extensions, to every site, so turn it off again after measuring. Rendering follows `requestAnimationFrame`, so fps can't go above the display's refresh rate; GPU time shows how much headroom is left. Once a still image has finished refining, nothing is drawn and the counter reads idle.
 
 While you move, the previews and the eye view drop to as low as half resolution if frames fall below 45 fps, and come back up once they recover. Refined images, and the eye view once you stop, are always full resolution.
+
+### Touch
+
+On a phone or tablet the HUD is the same, but you tap and drag it instead of pressing keys. The UI follows the last input used, so a laptop with a touch screen switches between the two.
+
+| Touch | Action |
+|---|---|
+| Drag the view | Look around (the scene follows your finger) |
+| Thumb on the lower left of the view | Walk: a joystick appears under it; push past the ring to hurry |
+| ▲ / ▼ above the lens (hold) | Raise / lower eye height |
+| Pinch, or drag the zoom bar | Zoom the selected lens, zoom lenses only |
+| Aperture and focus bars | Drag or tap them; ‹ › step once, or keep going while held |
+| Exposure row | Av / M |
+| Lens slots | Select a lens |
+| Lens wheel button | Tap a lens on the wheel, then Select it or show it side by side; tap outside to close |
+| Chips, top left | Camera / eye view, side by side, time of day |
+| Buttons, top right | Back to spawn, full screen (where the browser allows it), details, hide the HUD, help |
+| A finder, side by side | Select its lens |
+
+The HUD is scaled to fit the shorter side of the screen and keeps clear of the notch and home indicator. Landscape gives the bigger view. iPhone Safari can't make a page full screen; added to the home screen, Viewfinder opens without the browser's bars.
 
 Firefox has no parallel shader compilation, so a shader that isn't ready blocks the page. Shaders are built ahead: behind the loading screen, and on a time-of-day switch while the old image is still showing.
 

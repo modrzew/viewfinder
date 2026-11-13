@@ -2,8 +2,8 @@ import type { CSSProperties } from 'react';
 import { getBody } from '../optics/bodies';
 import { isZoom } from '../optics/lenses';
 import { formatFNumber, shutterLabel } from '../optics/stops';
-import { finderRects, hudScale } from '../render/layout';
-import { opticsFor, useStore } from '../state/store';
+import { finderRects } from '../render/layout';
+import { opticsFor, useHudScale, useStore } from '../state/store';
 import { avOutOfRange, lensFocalLabel } from './format';
 
 /**
@@ -14,11 +14,12 @@ export function Finders() {
   const settings = useStore((s) => s.settings);
   const ev100 = useStore((s) => s.runtime.ev100);
   const viewport = useStore((s) => s.runtime.viewport);
+  const safeArea = useStore((s) => s.runtime.safeArea);
   const progress = useStore((s) => s.runtime.finderRefine);
-  const scale = hudScale(viewport.height);
+  const scale = useHudScale();
   const ids = settings.sideBySideLensIds;
   const aspect = getBody(settings.bodyId).imageAspect;
-  const rects = finderRects(viewport.width, viewport.height, ids.length, aspect, scale);
+  const rects = finderRects(viewport.width, viewport.height, ids.length, aspect, scale, safeArea);
   return (
     <div className="finders" style={{ '--hud-scale': scale } as CSSProperties}>
       {ids.map((id, i) => {

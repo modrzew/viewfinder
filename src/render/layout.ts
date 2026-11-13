@@ -1,5 +1,5 @@
 import { CONFIG } from '../config';
-import type { View } from '../state/store';
+import type { Insets, View } from '../state/store';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
@@ -19,28 +19,39 @@ export function frameRect(vw: number, vh: number, view: View, aspect: number): R
   return { x: Math.floor((vw - width) / 2), y: Math.floor((vh - height) / 2), width, height };
 }
 
-/** The HUD scales with the window height, like a game's with its resolution (§9.2). */
-export function hudScale(vh: number): number {
-  const [min, max] = CONFIG.hudScaleRange;
-  return Math.min(Math.max(vh / CONFIG.hudReferenceHeightPx, min), max);
+/**
+ * The HUD scales with the window height, like a game's with its resolution (§9.2). The touch HUD (§9.5) scales
+ * with the shorter side instead, from a smaller reference, so it fits a phone either way up.
+ */
+export function hudScale(vw: number, vh: number, touch: boolean): number {
+  const [min, max] = touch ? CONFIG.touch.hudScaleRange : CONFIG.hudScaleRange;
+  const s = touch ? Math.min(vw, vh) / CONFIG.touch.hudReferencePx : vh / CONFIG.hudReferenceHeightPx;
+  return Math.min(Math.max(s, min), max);
 }
+
+const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 /**
  * Side by side (§9.1): `count` equal finders of `aspect` in a row docked at the top centre, so the centre of
  * the screen stays clear for aiming. The row either starts at the HUD's top margin, between the top corner
- * clusters, or below them across the full width; whichever gives the wider finder wins. CSS px.
+ * clusters, or below them across the full width; whichever gives the wider finder wins. The HUD keeps clear
+ * of the safe-area insets, so the row does too. CSS px.
  */
-export function finderRects(vw: number, vh: number, count: number, aspect: number, scale: number): Rect[] {
+export function finderRects(
+  vw: number, vh: number, count: number, aspect: number, scale: number, safe: Insets = NO_INSETS,
+): Rect[] {
   const c = CONFIG.sideBySide;
   if (count <= 0 || vw <= 0 || vh <= 0) return [];
   const gap = c.gapPx * scale;
   const finderBottom = c.maxRowHeight * vh - c.captionPx * scale;
+  // The row stays centred, so both sides keep the larger inset.
+  const inset = Math.max(safe.left, safe.right);
   const fit = (top: number, side: number) => ({
     top,
     width: Math.min((vw - 2 * side - (count - 1) * gap) / count, c.maxFinderWidth * vw, (finderBottom - top) * aspect),
   });
-  const between = fit(c.topPx * scale, c.cornerReservePx * scale);
-  const below = fit(c.belowCornersPx * scale, c.sideMarginPx * scale);
+  const between = fit(safe.top + c.topPx * scale, inset + c.cornerReservePx * scale);
+  const below = fit(safe.top + c.belowCornersPx * scale, inset + c.sideMarginPx * scale);
   const { top, width: w } = between.width >= below.width ? between : below;
   const width = Math.max(Math.floor(w), 1);
   const height = Math.max(Math.floor(width / aspect), 1);

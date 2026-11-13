@@ -5,6 +5,7 @@ import type { TimeOfDay } from './scene/timeOfDay';
 import type { SceneSetup } from './scene/types';
 import { BenchmarkOverlay } from './ui/BenchmarkOverlay';
 import { HelpOverlay } from './ui/HelpOverlay';
+import { useInputMode } from './ui/input';
 import { useShortcuts } from './ui/shortcuts';
 import { Viewport } from './ui/Viewport';
 import { useStore } from './state/store';
@@ -41,13 +42,14 @@ function ErrorScreen({ message }: { message: string }) {
     <div className="error-screen">
       <h1>Viewfinder can’t run here</h1>
       <p>{message}</p>
-      <p>Try the latest desktop Chrome, Safari or Firefox.</p>
+      <p>Try the latest Chrome, Safari or Firefox.</p>
     </div>
   );
 }
 
 export default function App() {
   useShortcuts(DEBUG, HAS_TIME_OF_DAY);
+  useInputMode();
   const error = useStore((s) => s.runtime.error);
   if (UNSUPPORTED) return <ErrorScreen message={UNSUPPORTED} />;
   if (error) return <ErrorScreen message={error} />;

@@ -1,12 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { PiMouseLeftClickBold } from 'react-icons/pi';
-import { TbColumns2 } from 'react-icons/tb';
+import { TbCheck, TbColumns2 } from 'react-icons/tb';
 import { CONFIG } from '../config';
 import { getBody } from '../optics/bodies';
 import { lensesFor } from '../optics/lenses';
-import { hudScale } from '../render/layout';
-import { sideBySideOnScreen, useStore, type Settings } from '../state/store';
+import { sideBySideOnScreen, useHudScale, useStore, type Settings } from '../state/store';
 import { lensApertureLabel, lensFocalLabel } from './format';
+import { TouchButton } from './TouchButtons';
 import { aimAngle, moveAim, polar, sliceAngle, sliceArc, sliceAt, slicePath } from './wheel';
 
 /** Ring radii and the gap between slices, CSS px at HUD scale 1. */
@@ -29,6 +29,9 @@ function clickAction(s: Settings, lensId: string): { text: string; enabled: bool
  * instead of looking around; releasing Space selects the lens under the aim, and a left click adds or removes
  * its finder side by side instead (after a click, releasing only closes the wheel). It belongs to the view, so
  * U doesn't hide it.
+ *
+ * Touch (§9.5): its button opens it until a tap outside the ring. A tap on a lens points at it, and the hub's
+ * prompts become buttons: select it (as does a second tap on it), or add or remove its finder.
  */
 export function LensWheel() {
   const open = useStore((s) => s.wheel !== null);
@@ -40,11 +43,14 @@ function OpenWheel() {
   const settings = useStore((s) => s.settings);
   const highlighted = useStore((s) => s.wheel?.lensId ?? null);
   const clicked = useStore((s) => s.wheel?.clicked ?? false);
-  const height = useStore((s) => s.runtime.viewport.height);
+  const touch = useStore((s) => s.input === 'touch');
+  const scale = useHudScale();
   const bodyId = settings.bodyId;
 
   // Mouse movement from the moment it opens is the aim, with or without pointer lock.
   useEffect(() => {
+    // A tap sends mouse events too, which aren't for this.
+    if (touch) return;
     const ids = lensesFor(getBody(bodyId)).map((l) => l.id);
     let a = { x: 0, y: 0 };
     const onMove = (e: MouseEvent) => {
@@ -70,22 +76,42 @@ function OpenWheel() {
       window.removeEventListener('mousedown', onDown);
       document.removeEventListener('pointerlockchange', onLockChange);
     };
-  }, [bodyId]);
+  }, [bodyId, touch]);
 
   const lenses = lensesFor(getBody(bodyId));
   const n = lenses.length;
   const onScreen = sideBySideOnScreen(settings);
   const lens = lenses.find((l) => l.id === highlighted) ?? null;
   const click = lens ? clickAction(settings, lens.id) : null;
-  const aiming = Math.hypot(aim.x, aim.y) >= CONFIG.lensWheel.deadZonePx;
+  const aiming = !touch && Math.hypot(aim.x, aim.y) >= CONFIG.lensWheel.deadZonePx;
   const pointer = polar(aimAngle(aim), INNER - 9);
 
+  const select = (id: string) => {
+    useStore.getState().setLens(id);
+    useStore.getState().closeWheel(false);
+  };
+  const tapSlice = (id: string) => {
+    if (id === highlighted) select(id);
+    else useStore.getState().setWheelLens(id);
+  };
+  // The scrim isn't zoomed, so its client rect is reliable; the wheel sits at its centre.
+  const tapScrim = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (d > OUTER * scale) useStore.getState().closeWheel(false);
+  };
+
   return (
-    <div className="wheel-scrim">
-      <div className="wheel" style={{ '--hud-scale': hudScale(height), width: SIZE, height: SIZE } as CSSProperties}>
+    <div className={touch ? 'wheel-scrim touch' : 'wheel-scrim'} onPointerDown={touch ? tapScrim : undefined}>
+      <div className="wheel" style={{ '--hud-scale': scale, width: SIZE, height: SIZE } as CSSProperties}>
         <svg viewBox={`${-SIZE / 2} ${-SIZE / 2} ${SIZE} ${SIZE}`} width={SIZE} height={SIZE}>
           {lenses.map((l, i) => (
-            <path key={l.id} className={l.id === highlighted ? 'wheel-slice on' : 'wheel-slice'} d={slicePath(i, n, INNER, OUTER, GAP)} />
+            <path
+              key={l.id}
+              className={l.id === highlighted ? 'wheel-slice on' : 'wheel-slice'}
+              d={slicePath(i, n, INNER, OUTER, GAP)}
+              onPointerDown={touch ? () => tapSlice(l.id) : undefined}
+            />
           ))}
           {lenses.map((l, i) => l.id === settings.lensId && (
             <path key={l.id} className="wheel-selected" d={sliceArc(i, n, OUTER - 4, GAP)} />
@@ -114,7 +140,23 @@ function OpenWheel() {
           );
         })}
         <div className="wheel-hub">
-          {lens && click ? (
+          {lens && click && touch && (
+            <>
+              <div className="wheel-hub-name">{lens.name}</div>
+              <TouchButton className="wheel-prompt" label="Select" onTap={() => select(lens.id)}>
+                <TbCheck />Select
+              </TouchButton>
+              <TouchButton
+                className={click.enabled ? 'wheel-prompt' : 'wheel-prompt off'}
+                label={click.text}
+                disabled={!click.enabled}
+                onTap={() => useStore.getState().clickWheel()}
+              >
+                <TbColumns2 />{click.text}
+              </TouchButton>
+            </>
+          )}
+          {lens && click && !touch && (
             <>
               <div className="wheel-hub-name">{lens.name}</div>
               <div className="wheel-prompt"><kbd>Space</kbd>{clicked ? 'Close' : 'Select'}</div>
@@ -122,10 +164,11 @@ function OpenWheel() {
                 <PiMouseLeftClickBold />{click.text}
               </div>
             </>
-          ) : (
+          )}
+          {!lens && (
             <>
               <div className="wheel-hub-name">Lenses</div>
-              <div className="wheel-hub-hint">Move the mouse to a lens</div>
+              <div className="wheel-hub-hint">{touch ? 'Tap a lens' : 'Move the mouse to a lens'}</div>
             </>
           )}
         </div>
