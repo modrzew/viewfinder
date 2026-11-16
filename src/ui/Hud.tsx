@@ -32,7 +32,7 @@ const ZOOM_SEGMENTS = 14;
 /** The exposure meter spans ±3 EV in thirds, like the camera's level indicator. */
 const METER_THIRDS = 9;
 
-type SegmentState = 'lit' | 'mark' | 'warn' | null;
+type SegmentState = 'lit' | 'mark' | null;
 
 const useTouch = () => useStore((s) => s.input === 'touch');
 
@@ -177,22 +177,41 @@ function FocusRow({ o }: { o: DerivedOptics }) {
   );
 }
 
-/** The bar is the exposure level: correct in the middle, lit out to the offset. */
+/**
+ * The exposure level as the camera prints it, `−3··2··1··0··1··2··+3`, with a pointer under the offset and a
+ * line from 0 out to it. A scale rather than a bar of segments, so it doesn't read as a slider: nothing sets it.
+ */
+function Meter({ thirds, warn }: { thirds: number; warn: boolean }) {
+  const count = 2 * METER_THIRDS + 1;
+  const at = (t: number) => ((t + METER_THIRDS + 0.5) / count) * 100;
+  const from = at(Math.min(thirds, 0));
+  return (
+    <div className="hud-meter">
+      <div className="hud-meter-scale">
+        {Array.from({ length: count }, (_, i) => {
+          const stop = (i - METER_THIRDS) / 3;
+          if (!Number.isInteger(stop)) return <i key={i} />;
+          return <b key={i}>{stop === -METER_THIRDS / 3 ? `−${-stop}` : stop === METER_THIRDS / 3 ? `+${stop}` : Math.abs(stop)}</b>;
+        })}
+      </div>
+      <div className={warn ? 'hud-meter-level warn' : 'hud-meter-level'}>
+        {thirds !== 0 && <span style={{ left: `${from}%`, width: `${at(Math.max(thirds, 0)) - from}%` }} />}
+        <i style={{ left: `${at(thirds)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function ExposureRow({ o }: { o: DerivedOptics }) {
   const outOfRange = avOutOfRange(o);
   const off = Math.max(-METER_THIRDS, Math.min(METER_THIRDS, Math.round(o.evOffset * 3)));
-  const meter = (i: number): SegmentState => {
-    const d = i - METER_THIRDS;
-    if (d === off) return outOfRange ? 'warn' : 'mark';
-    return d !== 0 && Math.sign(d) === Math.sign(off) && Math.abs(d) < Math.abs(off) ? 'lit' : null;
-  };
   return (
     <Row
       icon={TbStopwatch}
       keys={['X']}
       note={exposureNote(o)}
       warn={outOfRange}
-      bar={<Segments className="meter" count={2 * METER_THIRDS + 1} state={meter} />}
+      bar={<Meter thirds={off} warn={outOfRange} />}
       onTap={{ label: 'Exposure mode Av / M', action: () => useStore.getState().toggleExposureMode() }}
     >
       <Flash className="hud-row-mode" value={o.exposureMode} />
