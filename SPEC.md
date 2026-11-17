@@ -324,13 +324,13 @@ Show the EV offset in thirds, e.g. `−1⅓ EV`: always in M, and in Av when the
 
 Small clusters in the corners, styled after shooter HUDs: no panels behind them, icons rather than labels, white condensed type (Barlow Condensed) with a dark halo, and segmented bars standing in for sliders. The side clusters tilt slightly toward the centre. Key prompts are outlined letters. Everything scales with the window height (1× at 900 px, clamped to 0.8–1.4×).
 
-**Bottom left: the body and its settings.** A heading with the body name, then one row per setting: an icon, its keys, the value, a note, and a bar.
+**Bottom left: the body and its settings.** A heading with the body name, then one row per setting: an icon, its keys, the value, a note, and a bar (a scale for exposure).
 
 | Row | Keys | Value and note | Bar |
 |---|---|---|---|
 | Aperture | `[` `]` | `f/5.6`. When clamped, a red tag such as `widest at 55 mm`. | One segment per third-stop within the current limits, lit up to the current one. |
 | Focus | `−` `=` | The distance; the depth of field (`1.95 – 2.05 m`). | The focus scale (§8.6): the depth of field lit, the focus distance marked, and a tick under what's at the AF point. |
-| Exposure | X | `Av` or `M`, the shutter speed, and `ISO 100`. In M, or in Av at a shutter limit, the EV offset too (`ISO 100 · −1⅓ EV`). In Av at a limit the shutter speed blinks and the note turns into a red tag. | Exposure level, ±3 EV in thirds, lit from the middle out to the offset. |
+| Exposure | X | `Av` or `M`, the shutter speed, and `ISO 100`. In M, or in Av at a shutter limit, the EV offset too (`ISO 100 · −1⅓ EV`). In Av at a limit the shutter speed blinks and the note turns into a red tag. | Exposure level, ±3 EV in thirds, printed like the camera's level indicator (`−3··2··1··0··1··2··+3`) with a pointer under the offset and a line from 0 out to it, red in Av at a limit. A scale rather than a bar, since nothing sets it. |
 
 **Bottom right: the lens, like a weapon loadout.** The selected lens's name, the focal length in large type with `56 mm equiv. · 35.3° × 24.0°` under it, a zoom bar and the mouse wheel prompt (zoom lenses only), and a slot per lens that mounts, the selected one filled, after the Space (lens wheel) and L prompts. Side by side, the slots of lenses with a finder are outlined.
 
